@@ -4,44 +4,72 @@ import { ShoppingCart, PlusIcon } from 'lucide-react';
 
 export default function ManageOrders() {
   const initialForm = {
-    salesOrderNo: '',
-    custCd: '',
-    productCd: 'diesel',
-    orderQty: '',
+    customerId: '',
+    shipToAddress: '',
+    items: [{ productName: 'diesel', quantity: '', rate: '' }],
     deliveryDate: '',
-    deliveryTimeSlot: '',
-    orderType: 'regular',
-    orderStatus: 'PENDING'
+    deliveryTimeStart: '',
+    deliveryTimeEnd: '',
+    orderType: 'Regular'
   };
+
   const [form, setForm] = useState(initialForm);
   const [customers, setCustomers] = useState([]);
-  const [orders, setOrders] = useState([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
 
   useEffect(() => {
-    api.get('/customers').then(res => setCustomers(res.data));
-    fetchOrders();
+    api.get('/orders/customers')
+      .then(res => setCustomers(res.data))
+      .catch(err => setError(err.response?.data?.error || 'Failed to load customers'));
   }, []);
 
-  const fetchOrders = () => {
-    api.get('/orders').then(res => setOrders(res.data));
-  };
-
-  const handleChange = e => {
+  const handleFormChange = e => {
     const { name, value } = e.target;
     setForm(f => ({ ...f, [name]: value }));
     setError('');
   };
 
+  const handleItemChange = (idx, e) => {
+    const { name, value } = e.target;
+    setForm(f => {
+      const items = [...f.items];
+      items[idx] = { ...items[idx], [name]: value };
+      return { ...f, items };
+    });
+    setError('');
+  };
+
+  const addItem = () => {
+    setForm(f => ({
+      ...f,
+      items: [...f.items, { productName: 'diesel', quantity: '', rate: '' }]
+    }));
+  };
+
   const handleSubmit = async e => {
     e.preventDefault();
     setLoading(true);
+    setError('');
+
+    const deliveryTimeSlot = `${form.deliveryTimeStart} - ${form.deliveryTimeEnd}`;
+
+    const payload = {
+      customerId: form.customerId,
+      shipToAddress: form.shipToAddress,
+      orderType: form.orderType,
+      items: form.items.map(i => ({
+        productName: i.productName,
+        quantity: Number(i.quantity),
+        rate: Number(i.rate)
+      })),
+      deliveryDate: form.deliveryDate,
+      deliveryTimeSlot
+    };
+
     try {
-      // ensure orderStatus is sent
-      await api.post('/orders', form);
+      await api.post('/orders', payload);
       setForm(initialForm);
-      fetchOrders();
     } catch (err) {
       setError(err.response?.data?.error || 'Failed to create order');
     } finally {
@@ -54,76 +82,110 @@ export default function ManageOrders() {
       <h2 className="text-2xl font-semibold mb-6 flex items-center gap-2">
         <ShoppingCart size={24} /> Order Management
       </h2>
+
       <div className="bg-white p-6 rounded-lg shadow max-w-md mx-auto">
         <h3 className="text-xl font-medium mb-4 flex items-center gap-2">
           <PlusIcon size={20} /> Create New Order
         </h3>
+
         {error && <div className="text-red-600 mb-4">{error}</div>}
+
         <form onSubmit={handleSubmit} className="space-y-4">
-          <input
-            name="salesOrderNo"
-            value={form.salesOrderNo}
-            onChange={handleChange}
-            required
-            placeholder="Sales Order No"
-            className="w-full border rounded px-3 py-2"
-          />
           <select
-            name="custCd"
-            value={form.custCd}
-            onChange={handleChange}
+            name="customerId"
+            value={form.customerId}
+            onChange={handleFormChange}
             required
             className="w-full border rounded px-3 py-2"
           >
             <option value="">Select Customer</option>
             {customers.map(c => (
-              <option key={c._id} value={c.custCd}>
-                {c.custCd} — {c.name}
+              <option key={c.id} value={c.id}>
+                {c.custCd} — {c.custName}
               </option>
             ))}
           </select>
-          {/* Hard-coded product: diesel */}
-          <div>
-            <label className="block mb-1 font-semibold">Product</label>
-            <input
-              name="productCd"
-              value="diesel"
-              readOnly
-              className="w-full border rounded px-3 py-2 bg-gray-100"
-            />
-          </div>
+
           <input
-            name="orderQty"
-            type="number"
-            value={form.orderQty}
-            onChange={handleChange}
+            name="shipToAddress"
+            value={form.shipToAddress}
+            onChange={handleFormChange}
             required
-            placeholder="Quantity"
+            placeholder="Ship To Address"
             className="w-full border rounded px-3 py-2"
           />
+
+          {/* Order Type Selector */}
+          <select
+            name="orderType"
+            value={form.orderType}
+            onChange={handleFormChange}
+            required
+            className="w-full border rounded px-3 py-2"
+          >
+            <option value="Regular">Regular</option>
+            <option value="Express">Express</option>
+          </select>
+
+          {form.items.map((item, idx) => (
+            <div key={idx} className="flex space-x-2">
+              <input
+                name="quantity"
+                type="number"
+                value={item.quantity}
+                onChange={e => handleItemChange(idx, e)}
+                placeholder="Qty"
+                required
+                className="w-1/3 border rounded px-2 py-1"
+              />
+              <input
+                name="rate"
+                type="number"
+                step="0.01"
+                value={item.rate}
+                onChange={e => handleItemChange(idx, e)}
+                placeholder="Rate"
+                required
+                className="w-1/3 border rounded px-2 py-1"
+              />
+              <button
+                type="button"
+                onClick={addItem}
+                className="w-1/3 bg-blue-500 text-white rounded"
+              >
+                + Add
+              </button>
+            </div>
+          ))}
+
           <input
             name="deliveryDate"
             type="date"
             value={form.deliveryDate}
-            onChange={handleChange}
+            onChange={handleFormChange}
+            required
             className="w-full border rounded px-3 py-2"
           />
-          <input
-            name="deliveryTimeSlot"
-            value={form.deliveryTimeSlot}
-            onChange={handleChange}
-            placeholder="Time Slot"
-            className="w-full border rounded px-3 py-2"
-          />
-          <select
-            name="orderType"
-            value={form.orderType}
-            onChange={handleChange}
-            className="w-full border rounded px-3 py-2"
-          >
-            <option value="regular">Regular</option>
-            <option value="immediate">Immediate</option>
-          </select>
+
+          <div className="flex space-x-2">
+            <input
+              type="time"
+              name="deliveryTimeStart"
+              value={form.deliveryTimeStart}
+              onChange={handleFormChange}
+              required
+              className="w-1/2 border rounded px-3 py-2"
+            />
+            <input
+              type="time"
+              name="deliveryTimeEnd"
+              value={form.deliveryTimeEnd}
+              onChange={handleFormChange}
+              required
+              className="w-1/2 border rounded px-3 py-2"
+            />
+          </div>
+
           <button
             type="submit"
             disabled={loading}

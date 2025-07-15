@@ -12,6 +12,10 @@ import SalesAssociateForm from './components/SalesAssociateForm';
 import CreateRoute from './components/CreateRoute';
 import Orders from './components/Orders';
 import OrdersList from './components/OrderList';
+import TripManager from './components/TripManager';
+import DriverDeliveries from './components/DriverDeliveries';
+import DriverTrips from './components/DriverTrip';
+import LoadingModule from './components/Loading';
 
 export default function App() {
   return (
@@ -32,6 +36,10 @@ export default function App() {
               <Route path="create-sales-associate" element={<SalesAssociateForm />} />
               <Route path="create-order" element={<Orders />} />
               <Route path="list-order" element={<OrdersList />} />
+              <Route path="trip-manager" element={<TripManager />} />
+              <Route path='driver-deliveries' element={<DriverDeliveries />} />
+              <Route path='driver-trips' element={<DriverTrips />} />
+              <Route path='loading' element={<LoadingModule />} />
             </Route>
           </Route>
         </Routes>
