@@ -1,16 +1,23 @@
 import React, { useState, useEffect } from 'react';
+import { useNavigate } from 'react-router-dom';
 import api from '../api';
 import { Edit3, Search, Trash2 } from 'lucide-react';
 
-const STATUS_OPTIONS = ['PENDING', 'PARTIALLY_COMPLETED', 'COMPLETED', 'CANCELLED'];
+const STATUS_OPTIONS = [
+  'PENDING',
+  'PARTIALLY_COMPLETED',
+  'COMPLETED',
+  'CANCELLED'
+];
 
 export default function OrdersList() {
-  const [orders, setOrders] = useState([]);
-  const [filtered, setFiltered] = useState([]);
-  const [search, setSearch] = useState('');
-  const [from, setFrom] = useState('');
-  const [to, setTo] = useState('');
-  const [error, setError] = useState(null);
+  const [orders, setOrders]       = useState([]);
+  const [filtered, setFiltered]   = useState([]);
+  const [search, setSearch]       = useState('');
+  const [from, setFrom]           = useState('');
+  const [to, setTo]               = useState('');
+  const [error, setError]         = useState(null);
+  const navigate                  = useNavigate();
 
   useEffect(() => {
     fetchAll();
@@ -37,7 +44,9 @@ export default function OrdersList() {
   };
 
   const sortPendingFirst = list =>
-    [...list].sort((a, b) => (a.orderStatus === 'PENDING' && b.orderStatus !== 'PENDING' ? -1 : 1));
+    [...list].sort((a, b) =>
+      a.orderStatus === 'PENDING' && b.orderStatus !== 'PENDING' ? -1 : 1
+    );
 
   const handleStatusChange = (id, status) => {
     api.put(`/orders/${id}`, { orderStatus: status })
@@ -49,17 +58,27 @@ export default function OrdersList() {
   };
 
   const handleDelete = id => {
-    const confirmDelete = window.confirm('Are you sure you want to delete this order?');
-    if (!confirmDelete) return;
-
+    if (!window.confirm('Are you sure you want to delete this order?')) return;
     api.delete(`/orders/${id}`)
-      .then(() => fetchAll())
+      .then(fetchAll)
       .catch(err => {
         alert('Failed to delete order');
         console.error(err);
       });
   };
 
+  // ** NEW **: Fetch order details & navigate to AssignTrip
+  const handleAssignTrip = async (orderId) => {
+    try {
+      const res = await api.get(`/orders/${orderId}`);
+      navigate('/trip-manager', { state: { order: res.data } });
+    } catch (err) {
+      console.error(err);
+      alert('Failed to load order details for trip assignment');
+    }
+  };
+
+  // Filter + search
   useEffect(() => {
     let temp = orders;
     if (search) {
@@ -86,6 +105,7 @@ export default function OrdersList() {
 
       {!error && (
         <>
+          {/* Search & Date Filters */}
           <div className="flex gap-4 mb-4">
             <div className="flex items-center border rounded px-2">
               <Search size={16} />
@@ -110,6 +130,7 @@ export default function OrdersList() {
             />
           </div>
 
+          {/* Orders Table */}
           <table className="min-w-full bg-white shadow rounded">
             <thead>
               <tr className="bg-gray-200">
@@ -145,7 +166,17 @@ export default function OrdersList() {
                       ))}
                     </select>
                   </td>
-                  <td className="border px-4 py-2 text-center">
+                  <td className="border px-4 py-2 text-center space-x-2">
+                    {/* Assign Trip button */}
+                    <button
+                      onClick={() => handleAssignTrip(o._id)}
+                      className="text-blue-600 hover:text-blue-800"
+                      title="Assign Trip"
+                    >
+                      <Edit3 size={16} />
+                    </button>
+
+                    {/* Delete Order button */}
                     <button
                       onClick={() => handleDelete(o._id)}
                       className="text-red-600 hover:text-red-800"

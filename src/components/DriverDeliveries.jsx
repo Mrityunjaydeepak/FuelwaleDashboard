@@ -1,62 +1,57 @@
 import React, { useState, useEffect } from 'react';
 import { useLocation, useNavigate } from 'react-router-dom';
-
 import api from '../api';
 
 export default function DeliveryModule() {
-  const { state }    = useLocation();
-  const navigate     = useNavigate();
-  const tripId       = state?.tripId;
+  const { state }  = useLocation();
+  const navigate   = useNavigate();
+  const tripId     = state?.tripId;
 
   // ── Data ───────────────────────────────────────
-  const [trip, setTrip]               = useState(null);
-  const [pending, setPending]         = useState([]);
-  const [completed, setCompleted]     = useState([]);
-  const [balance, setBalance]         = useState(null);
+  const [trip, setTrip]           = useState(null);
+  const [pending, setPending]     = useState([]);
+  const [completed, setCompleted] = useState([]);
+  const [balance, setBalance]     = useState(null);
 
-  // ── UI & Form State ───────────────────────────
-  const [view, setView]               = useState('pending');
-  const [selected, setSelected]       = useState(null);
-  const [qty, setQty]                 = useState('');
-  const [rate, setRate]               = useState('');
-  const [error, setError]             = useState('');
-  const [submitting, setSubmitting]   = useState(false);
+  // ── UI State ───────────────────────────────────
+  const [view, setView]           = useState('pending');
+  const [selected, setSelected]   = useState(null);
+  const [qty, setQty]             = useState('');
+  const [rate, setRate]           = useState('');
+  const [error, setError]         = useState('');
+  const [submitting, setSubmitting] = useState(false);
 
-  const [showEndForm, setShowEndForm]     = useState(false);
-  const [endKm, setEndKm]                 = useState('');
-  const [totalizerEnd, setTotalizerEnd]   = useState('');
-  const [ending, setEnding]               = useState(false);
+  const [showEndForm, setShowEndForm]   = useState(false);
+  const [endKm, setEndKm]               = useState('');
+  const [totalizerEnd, setTotalizerEnd] = useState('');
+  const [ending, setEnding]             = useState(false);
 
-  // ── 1) Load everything on mount & refresh ─────────────────
+  // ── Load on mount / tripId change ─────────────────
   useEffect(() => {
+    if (!tripId) return;
     refreshAll();
   }, [tripId]);
 
   const refreshAll = () => {
-    if (!tripId) return;
     setError('');
 
-    // a) trip info
     api.get(`/trips/${tripId}`)
       .then(r => setTrip(r.data))
       .catch(() => setError('Failed to load trip'));
 
-    // b) pending deliveries
     api.get(`/deliveries/pending/${tripId}`)
       .then(r => setPending(r.data))
       .catch(() => setError('Failed to load pending deliveries'));
 
-    // c) completed deliveries
     api.get(`/deliveries/completed/${tripId}`)
       .then(r => setCompleted(r.data))
       .catch(() => setError('Failed to load completed deliveries'));
 
-    // d) bowser balance
     api.get(`/bowserinventories/${tripId}`)
       .then(r => setBalance(r.data?.balanceLiters ?? 0))
       .catch(() => setBalance(0));
 
-    // reset forms
+    // Reset forms
     setSelected(null);
     setQty('');
     setRate('');
@@ -65,12 +60,17 @@ export default function DeliveryModule() {
     setTotalizerEnd('');
   };
 
-  // ── 2) Submit a delivery ───────────────────────
+  // ──  Submit a delivery ───────────────────────
   const handleDeliver = async () => {
     const q  = Number(qty);
     const rt = Number(rate);
-    if (!selected || isNaN(q) || isNaN(rt)) {
-      setError('Customer, qty and rate are required');
+
+    if (!selected || !selected.orderId) {
+      setError('You must select a customer/order first');
+      return;
+    }
+    if (isNaN(q) || isNaN(rt)) {
+      setError('Qty and rate must be numbers');
       return;
     }
     if (balance != null && q > balance) {
@@ -79,20 +79,20 @@ export default function DeliveryModule() {
     }
 
     setSubmitting(true);
+    setError('');
     try {
-      const res = await api.post('/deliveries', {
+      await api.post('/deliveries', {
         tripId,
+        orderId:    selected.orderId,
         customerId: selected.customerId,
         shipTo:     selected.shipTo,
         qty:        q,
         rate:       rt
       });
-      console.log(
-        `📱 WhatsApp to ${selected.customerPhone || '[no phone]'}:\n` +
-        `DC No: ${res.data.dcNo}\n` +
-        `Date: ${new Date().toLocaleString()}\n` +
-        `Qty: ${q} L, Rate: ${rt}, Amount: ₹${q * rt}, Vehicle: ${selected.vehicleNo}`
-      );
+      // Clear form & reload lists
+      setSelected(null);
+      setQty('');
+      setRate('');
       refreshAll();
     } catch (err) {
       setError(err.response?.data?.error || 'Delivery failed');
@@ -101,19 +101,19 @@ export default function DeliveryModule() {
     }
   };
 
-  // ── 3) Show End‐Trip form ───────────────────────
+  // ── Show end‐trip form ───────────────────────
   const onRequestEnd = () => {
     setShowEndForm(true);
     setError('');
   };
 
-  // ── 4) Submit end‐trip ───────────────────────────
+  // ── Submit end‐trip ───────────────────────────
   const handleEndTrip = async () => {
     if (!endKm || !totalizerEnd) {
-      setError('End KM and totalizer are required');
+      setError('End KM and totalizer end are required');
       return;
     }
-    const eKm = Number(endKm);
+    const eKm  = Number(endKm);
     const tEnd = Number(totalizerEnd);
     if (trip.startKm != null && eKm < trip.startKm) {
       setError(`End KM (${eKm}) cannot be less than start KM (${trip.startKm})`);
@@ -127,11 +127,7 @@ export default function DeliveryModule() {
     setEnding(true);
     setError('');
     try {
-      await api.post('/trips/logout', {
-        tripId,
-        endKm:        eKm,
-        totalizerEnd: tEnd
-      });
+      await api.post('/trips/logout', { tripId, endKm: eKm, totalizerEnd: tEnd });
       refreshAll();
     } catch (err) {
       setError(err.response?.data?.error || 'Failed to complete trip');
@@ -140,13 +136,13 @@ export default function DeliveryModule() {
     }
   };
 
-  // ── 5) Generate Invoice ───────────────────────────
+  // ── Download invoice ───────────────────────────
   const handleGenerateInvoice = async () => {
     setError('');
     try {
       const res = await api.get(`/trips/${tripId}/invoice`, { responseType: 'blob' });
       const blob = new Blob([res.data], { type: 'application/pdf' });
-      const url = window.URL.createObjectURL(blob);
+      const url  = window.URL.createObjectURL(blob);
       const link = document.createElement('a');
       link.href = url;
       link.setAttribute('download', `invoice_${tripId}.pdf`);
@@ -158,11 +154,11 @@ export default function DeliveryModule() {
     }
   };
 
-  // ── 6) Compute tab counts ───────────────────────
+  // ── Tab counts ───────────────────────────────
   const pendingCount   = pending.length + (trip?.status === 'ACTIVE' ? 1 : 0);
   const completedCount = completed.length + (trip?.status === 'COMPLETED' ? 1 : 0);
 
-  // ── 7) Render ───────────────────────────────────
+  // ── Render ───────────────────────────────────
   return (
     <div className="max-w-lg mx-auto p-6 bg-white shadow rounded mt-6">
       <h2 className="text-2xl font-semibold mb-4">Delivery Module</h2>
@@ -171,20 +167,19 @@ export default function DeliveryModule() {
       {/* Tabs */}
       <div className="flex mb-4">
         <button
-          className={`flex-1 py-2 ${view==='pending'? 'bg-blue-600 text-white':'bg-gray-200'}`}
+          className={`flex-1 py-2 ${view==='pending' ? 'bg-blue-600 text-white' : 'bg-gray-200'}`}
           onClick={()=>setView('pending')}
         >
           Pending ({pendingCount})
         </button>
         <button
-          className={`flex-1 py-2 ${view==='completed'? 'bg-blue-600 text-white':'bg-gray-200'}`}
+          className={`flex-1 py-2 ${view==='completed' ? 'bg-blue-600 text-white' : 'bg-gray-200'}`}
           onClick={()=>setView('completed')}
         >
           Completed ({completedCount})
         </button>
       </div>
 
-      {/* Bowser Balance */}
       <p className="mb-4">
         <strong>Bowser Balance:</strong>{' '}
         {balance != null ? `${balance} L` : 'Loading…'}
@@ -192,10 +187,9 @@ export default function DeliveryModule() {
 
       {view==='pending' && (
         <>
-          {/* Active Trip & End-Trip */}
           {trip?.status === 'ACTIVE' && (
             <div className="mb-4 p-4 border rounded">
-              <div className="flex justify-between items-start">
+              <div className="flex justify-between">
                 <div>
                   <p><strong>Trip ID:</strong> {trip._id}</p>
                   <p className="text-sm"><strong>Route:</strong> {trip.routeName}</p>
@@ -213,6 +207,7 @@ export default function DeliveryModule() {
               </div>
               {showEndForm && (
                 <div className="mt-4 space-y-3">
+                  {/* End-trip inputs */}
                   <div>
                     <label className="block mb-1">End KMs</label>
                     <input
@@ -252,19 +247,18 @@ export default function DeliveryModule() {
             </div>
           )}
 
-          {/* Pending Deliveries or Form */}
           {!selected ? (
             <ul className="space-y-2 mb-4">
-              {pending.map(d => (
-                <li key={d._id} className="p-3 border rounded flex justify-between">
+              {pending.map(item => (
+                <li key={item._id} className="p-3 border rounded flex justify-between">
                   <div>
-                    <p><strong>{d.customerName}</strong></p>
-                    <p className="text-sm">{d.shipTo}</p>
-                    <p className="text-sm">Req: {d.requiredQty} L</p>
+                    <p><strong>{item.customerName}</strong></p>
+                    <p className="text-sm">{item.shipTo}</p>
+                    <p className="text-sm">Req: {item.requiredQty} L</p>
                   </div>
                   <button
                     className="bg-green-600 text-white px-3 py-1 rounded"
-                    onClick={()=>setSelected(d)}
+                    onClick={()=>setSelected(item)}
                   >
                     Deliver
                   </button>
@@ -276,13 +270,12 @@ export default function DeliveryModule() {
               <p><strong>Deliver to:</strong> {selected.customerName}</p>
               <p><strong>Address:</strong> {selected.shipTo}</p>
               <p><strong>Required:</strong> {selected.requiredQty} L</p>
-              {error && <div className="text-red-600 my-2">{error}</div>}
               <div className="mb-3">
                 <label className="block mb-1">Qty (L)</label>
                 <input
                   type="number"
                   value={qty}
-                  onChange={e=>setQty(e.target.value)}
+                  onChange={e => setQty(e.target.value)}
                   className="w-full border px-2 py-1 rounded"
                 />
               </div>
@@ -291,7 +284,7 @@ export default function DeliveryModule() {
                 <input
                   type="number"
                   value={rate}
-                  onChange={e=>setRate(e.target.value)}
+                  onChange={e => setRate(e.target.value)}
                   className="w-full border px-2 py-1 rounded"
                 />
               </div>
@@ -318,7 +311,6 @@ export default function DeliveryModule() {
 
       {view==='completed' && (
         <>
-          {/* Completed Trip Card & Invoice */}
           {trip?.status === 'COMPLETED' && (
             <div className="mb-4 p-4 border rounded flex justify-between items-center">
               <div>
@@ -335,8 +327,6 @@ export default function DeliveryModule() {
               </button>
             </div>
           )}
-
-          {/* Completed Deliveries List */}
           <ul className="space-y-2">
             {completed.map(d => (
               <li key={d._id} className="p-3 border rounded">

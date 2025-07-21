@@ -17,6 +17,7 @@ export default function DriverAssignedTrips() {
   const [totalizerInput, setTotalizerInput]   = useState('');
   const [formError, setFormError]             = useState('');
   const [submitting, setSubmitting]           = useState(false);
+  
 
   const navigate = useNavigate();
 
