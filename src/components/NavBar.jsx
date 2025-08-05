@@ -21,6 +21,11 @@ const navItems = [
   { to: '/trip-manager',   label: 'Trip Manager',  icon: <RouteIcon size={20}/>,    roles: ['a','s'] },
   { to: '/driver-trips',   label: 'Driver Trips',  icon: <RouteIcon size={20}/>,    roles: ['a','d'] },
   { to: '/driver-deliveries',   label: 'Driver Deliveries',  icon: <RouteIcon size={20}/>,    roles: ['a','d'] },
+  { to: '/vehicle-master',   label: 'Vehicle Master',  icon: <RouteIcon size={20}/>,    roles: ['a'] },
+  { to: '/customer-master',   label: 'Customer Master',  icon: <RouteIcon size={20}/>,    roles: ['a'] },
+  { to: '/user-master',   label: 'User Master',  icon: <RouteIcon size={20}/>,    roles: ['a'] },
+  { to: '/driver-master',   label: 'Driver Master',  icon: <RouteIcon size={20}/>,    roles: ['a'] },
+  { to: '/employee-master',   label: 'Employee Master',  icon: <RouteIcon size={20}/>,    roles: ['a'] },
 ];
 
 export default function NavBar() {

@@ -7,131 +7,91 @@ export default function LoadingModule() {
   const navigate       = useNavigate();
   const tripId         = state?.tripId;
 
-  // ── Data + UI flags ───────────────────────────
-  const [trip, setTrip]                 = useState(null);
-  const [stations, setStations]         = useState([]);
-  const [isInitializing, setIsInitializing] = useState(true);
-  const [globalError, setGlobalError]   = useState('');
+  const [trip, setTrip]                   = useState(null);
+  const [stations, setStations]           = useState([]);
+  const [initializing, setInitializing]   = useState(true);
+  const [globalError, setGlobalError]     = useState('');
 
-  // ── Code flow ────────────────────────────────
-  const [codeRequired, setCodeRequired] = useState(false);
-  const [isCodeVerified, setIsCodeVerified] = useState(false);
-  const [codeInput, setCodeInput]       = useState('');
-  const [codeError, setCodeError]       = useState('');
+  const [stationId, setStationId]       = useState('');
+  const [product, setProduct]           = useState('');
+  const [qty, setQty]                   = useState('');
+  const [formError, setFormError]       = useState('');
+  const [submitting, setSubmitting]     = useState(false);
 
-  // ── Form state ───────────────────────────────
-  const [stationId, setStationId]   = useState('');
-  const [product, setProduct]       = useState('');
-  const [qty, setQty]               = useState('');
-  const [formError, setFormError]   = useState('');
-  const [isSubmitting, setIsSubmitting] = useState(false);
-
-  // ── 1) Initialization ─────────────────────────
   useEffect(() => {
     if (!tripId) {
       setGlobalError('No trip selected.');
-      setIsInitializing(false);
+      setInitializing(false);
       return;
     }
     (async () => {
       try {
-        // a) load trip
-        const tripRes = await api.get(`/trips/${tripId}`);
-        setTrip(tripRes.data);
+        // 1) load trip with populated vehicle → vehicle.depot
+        const { data: tripData } = await api.get(`/trips/${tripId}`);
+        setTrip(tripData);
 
-        // b) load stations
-        const stationsRes = await api.get(`/loadings/stations/${tripRes.data.routeId}`);
-        setStations(stationsRes.data);
-
-        // c) generate code
-        const codeRes = await api.post('/loadings/generate-code', { tripId });
-        setCodeRequired(codeRes.data.codeRequired);
-        if (!codeRes.data.codeRequired) {
-          setIsCodeVerified(true);
-        }
+        // 2) load stations
+        const { data: stationsData } = await api.get(
+          `/loadings/stations/${tripData.routeId}`
+        );
+        setStations(stationsData);
       } catch (err) {
         setGlobalError(err.response?.data?.error || 'Initialization failed.');
       } finally {
-        setIsInitializing(false);
+        setInitializing(false);
       }
     })();
   }, [tripId]);
 
-  // ── 2) Early exits ─────────────────────────────
-  if (isInitializing) {
-    return <p>Initializing loading module…</p>;
-  }
-  if (globalError) {
-    return <p className="text-red-600">{globalError}</p>;
-  }
-  if (!trip) {
-    // trip is still null, so never read trip.balanceLiters yet
-    return <p>Loading trip details…</p>;
-  }
-  if (codeRequired && !isCodeVerified) {
-    return (
-      <div className="max-w-md mx-auto p-6 bg-white shadow rounded mt-6">
-        <h2 className="text-2xl font-semibold mb-4">Enter Authorization Code</h2>
-        {codeError && <div className="text-red-600 mb-2">{codeError}</div>}
-        <input
-          type="text"
-          placeholder="6-digit code"
-          maxLength={6}
-          value={codeInput}
-          onChange={e => setCodeInput(e.target.value)}
-          className="w-full border px-3 py-2 rounded mb-4"
-        />
-        <button
-          onClick={async () => {
-            setCodeError('');
-            try {
-              await api.post('/loadings/verify-code', { tripId, code: codeInput });
-              setIsCodeVerified(true);
-            } catch (err) {
-              setCodeError(err.response?.data?.error || 'Invalid code');
-            }
-          }}
-          className="w-full bg-blue-600 text-white py-2 rounded"
-        >
-          Verify Code
-        </button>
-      </div>
-    );
-  }
+  if (initializing) return <p>Initializing…</p>;
+  if (globalError)  return <p className="text-red-600">{globalError}</p>;
+  if (!trip)        return <p>Loading trip…</p>;
 
-  // ── 3) Main loading form (safe to read trip.balanceLiters) ─────────────────────────
-  const balanceLitersDisplay =
-    trip.balanceLiters != null
-      ? `${trip.balanceLiters} L`
-      : '—';
+  const balanceLiters = trip.balanceLiters != null
+    ? `${trip.balanceLiters} L`
+    : '—';
+
+  // vehicle fields from populated trip.vehicle
+  const vehicleId = trip.vehicle?._id;
+  const vehicleNo = trip.vehicle?.vehicleNo;
+  const depotCd   = trip.vehicle?.depot?.depotCd;
 
   return (
-    <div className="max-w-md mx-auto p-6 bg-white shadow rounded mt-6">
-      <h2 className="text-2xl font-semibold mb-4">Record Loading</h2>
+    <div className="max-w-md mx-auto p-6 bg-white shadow rounded mt-6 space-y-6">
+      <h2 className="text-2xl font-semibold">Record Loading</h2>
 
-      <div className="mb-4">
-        <p>
-          <strong>Current Diesel Balance:</strong> {balanceLitersDisplay}
-        </p>
+      {/* Vehicle Info */}
+      {vehicleNo && (
+        <div className="p-4 bg-gray-100 rounded space-y-1">
+          <p><strong>Vehicle No.:</strong> {vehicleNo}</p>
+          <p><strong>Depot Code:</strong> {depotCd}</p>
+        </div>
+      )}
+
+      {/* Current Diesel Balance */}
+      <div>
+        <p><strong>Current Diesel Balance:</strong> {balanceLiters}</p>
       </div>
 
-      {formError && <div className="text-red-600 mb-2">{formError}</div>}
+      {formError && <div className="text-red-600">{formError}</div>}
 
-      <div className="mb-4">
+      {/* Station */}
+      <div>
         <label className="block mb-1">Station</label>
         <select
           value={stationId}
           onChange={e => setStationId(e.target.value)}
           className="w-full border px-3 py-2 rounded"
         >
-          <option value="">-- Select station --</option>
+          <option value="">— Select station —</option>
           {stations.map(s => (
             <option key={s.id} value={s.id}>{s.name}</option>
           ))}
         </select>
       </div>
 
-      <div className="mb-4">
+      {/* Product */}
+      <div>
         <label className="block mb-1">Product</label>
         <input
           type="text"
@@ -141,7 +101,8 @@ export default function LoadingModule() {
         />
       </div>
 
-      <div className="mb-6">
+      {/* Quantity */}
+      <div>
         <label className="block mb-1">Quantity (L)</label>
         <input
           type="number"
@@ -152,36 +113,44 @@ export default function LoadingModule() {
         />
       </div>
 
+      {/* Submit */}
       <button
-        disabled={isSubmitting}
+        disabled={submitting}
         onClick={async () => {
           if (!stationId || !product || !qty) {
             setFormError('All fields are required.');
             return;
           }
+          if (!vehicleId) {
+            setFormError('Vehicle ID is missing.');
+            return;
+          }
+          if (!depotCd) {
+            setFormError('Depot code is missing.');
+            return;
+          }
           setFormError('');
-          setIsSubmitting(true);
-
-          const payload = {
-            tripId,
-            stationId,
-            product,
-            qty: Number(qty),
-            ...(codeRequired ? { code: codeInput } : {})
-          };
+          setSubmitting(true);
 
           try {
-            await api.post('/loadings', payload);
+            await api.post('/loadings', {
+              tripId,
+              stationId,
+              product,
+              qty: Number(qty),
+              vehicleId,
+              depotCd
+            });
             navigate('/driver-deliveries', { state: { tripId } });
           } catch (err) {
             setFormError(err.response?.data?.error || 'Recording failed');
           } finally {
-            setIsSubmitting(false);
+            setSubmitting(false);
           }
         }}
-        className="w-full bg-green-600 text-white py-2 rounded"
+        className="w-full bg-green-600 text-white py-2 rounded hover:bg-green-700"
       >
-        {isSubmitting ? 'Submitting…' : 'Fill'}
+        {submitting ? 'Submitting…' : 'Fill'}
       </button>
     </div>
   );

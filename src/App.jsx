@@ -16,6 +16,11 @@ import TripManager from './components/TripManager';
 import DriverDeliveries from './components/DriverDeliveries';
 import DriverTrips from './components/DriverTrip';
 import LoadingModule from './components/Loading';
+import VehicleManagement from './components/VehicleManager';
+import CustomerManagement from './components/CustomerManager';
+import UserManagement from './components/UserManager';
+import DriverManagement from './components/DriverManager';
+import EmployeeManagement from './components/EmployeeManager';
 
 export default function App() {
   return (
@@ -40,6 +45,11 @@ export default function App() {
               <Route path='driver-deliveries' element={<DriverDeliveries />} />
               <Route path='driver-trips' element={<DriverTrips />} />
               <Route path='loading' element={<LoadingModule />} />
+              <Route path='vehicle-master' element={<VehicleManagement />} />
+              <Route path='customer-master' element={<CustomerManagement />} />
+              <Route path='user-master' element={<UserManagement />} />
+              <Route path='driver-master' element={<DriverManagement />} />
+              <Route path='employee-master' element={<EmployeeManagement />} />
             </Route>
           </Route>
         </Routes>
