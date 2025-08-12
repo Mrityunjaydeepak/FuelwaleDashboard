@@ -1,3 +1,4 @@
+// src/components/LoadingModule.jsx
 import React, { useState, useEffect } from 'react';
 import { useLocation, useNavigate } from 'react-router-dom';
 import api from '../api';
@@ -24,6 +25,13 @@ export default function LoadingModule() {
       .toUpperCase()
       .replace(/[\s\-._]/g, ''); // remove spaces, dashes, dots, underscores
 
+  const getId = (val) => {
+    if (!val) return '';
+    if (typeof val === 'string') return val;
+    if (typeof val === 'object') return val._id || val.id || val.value || '';
+    return '';
+  };
+
   function normalizeVehicleShape(v) {
     if (!v) return null;
     const out = { ...v };
@@ -36,9 +44,6 @@ export default function LoadingModule() {
 
   async function resolveVehicle(vehicleNoFromTrip) {
     try {
-      // try to resolve quickly without fetching list
-      // (the backend /trips/:id may already have included a partial "vehicle")
-      // but if not present, fetch the list and match locally
       const { data: allVehicles } = await api.get('/vehicles');
 
       const target = String(vehicleNoFromTrip || '');
@@ -100,12 +105,15 @@ export default function LoadingModule() {
         // 3) save merged trip
         setTrip({ ...tripData, vehicle });
 
-        // 4) load stations for route
-        if (!tripData.routeId) {
-          setGlobalError('Trip has no route assigned.');
+        // 4) load stations for route (IMPORTANT: extract the id!)
+        const routeIdStr = getId(tripData.routeId);
+        const looksLikeObjectId = /^[a-fA-F0-9]{24}$/.test(routeIdStr || '');
+        if (!routeIdStr || !looksLikeObjectId) {
+          setGlobalError('Trip has no valid route assigned.');
           return;
         }
-        const { data: stationsData } = await api.get(`/loadings/stations/${tripData.routeId}`);
+
+        const { data: stationsData } = await api.get(`/loadings/stations/${routeIdStr}`);
         setStations(stationsData);
       } catch (err) {
         setGlobalError(err.response?.data?.error || 'Initialization failed.');

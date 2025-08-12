@@ -3,26 +3,27 @@ import React, { useEffect, useMemo, useState } from 'react';
 import api from '../api';
 import { Edit3, Plus, Search, Trash2, X } from 'lucide-react';
 
-const BASE = '/loadingsources'; // <-- adjust if your router mounts at a different path
+const BASE = '/loadingsources'; // /api base handled by api instance
 
-// Reasonable default shape if your model doesn't enforce schema strictly.
-// Feel free to add/remove fields to match your backend model.
 const emptyForm = {
-  sourceCode: '',
-  sourceName: '',
-  address: '',
+  loadSourceCd: '',
+  name: '',
+  add1: '',
+  add2: '',
+  add3: '',
+  area: '',
   city: '',
-  state: '',
-  contactName: '',
-  contactPhone: '',
-  isActive: true
+  pin: '',
+  stateCd: '',
+  routeIds: [] // stores selected route ids
 };
 
 export default function LoadingSourceMaster() {
   const [list, setList] = useState([]);
   const [filtered, setFiltered] = useState([]);
+  const [routes, setRoutes] = useState([]); // all routes
+  const [routeMap, setRouteMap] = useState({});
   const [search, setSearch] = useState('');
-  const [status, setStatus] = useState('ALL'); // ALL | ACTIVE | INACTIVE
   const [error, setError] = useState(null);
   const [loading, setLoading] = useState(true);
 
@@ -34,17 +35,15 @@ export default function LoadingSourceMaster() {
 
   useEffect(() => {
     fetchAll();
+    fetchRoutes();
   }, []);
 
   function sortSmart(a, b) {
-    // Active first, then by name/code
-    if (a.isActive && !b.isActive) return -1;
-    if (!a.isActive && b.isActive) return 1;
-    const an = (a.sourceName || '').toLowerCase();
-    const bn = (b.sourceName || '').toLowerCase();
+    const an = (a.name || '').toLowerCase();
+    const bn = (b.name || '').toLowerCase();
     if (an && bn && an !== bn) return an.localeCompare(bn);
-    const ac = (a.sourceCode || '').toLowerCase();
-    const bc = (b.sourceCode || '').toLowerCase();
+    const ac = (a.loadSourceCd || '').toLowerCase();
+    const bc = (b.loadSourceCd || '').toLowerCase();
     return ac.localeCompare(bc);
   }
 
@@ -52,17 +51,19 @@ export default function LoadingSourceMaster() {
     setLoading(true);
     setError(null);
     try {
-      const res = await api.get(BASE); // GET all
+      const res = await api.get(BASE);
       const normalized = (res.data || []).map((o) => ({
         _id: o._id,
-        sourceCode: o.sourceCode ?? '',
-        sourceName: o.sourceName ?? '',
-        address: o.address ?? '',
+        loadSourceCd: o.loadSourceCd ?? '',
+        name: o.name ?? '',
+        add1: o.add1 ?? '',
+        add2: o.add2 ?? '',
+        add3: o.add3 ?? '',
+        area: o.area ?? '',
         city: o.city ?? '',
-        state: o.state ?? '',
-        contactName: o.contactName ?? '',
-        contactPhone: o.contactPhone ?? '',
-        isActive: typeof o.isActive === 'boolean' ? o.isActive : true,
+        pin: o.pin ?? '',
+        stateCd: o.stateCd ?? '',
+        routeIds: Array.isArray(o.routeIds) ? o.routeIds.map(String) : [],
         createdAt: o.createdAt ?? null,
         updatedAt: o.updatedAt ?? null
       }));
@@ -82,46 +83,58 @@ export default function LoadingSourceMaster() {
     }
   }
 
+  async function fetchRoutes() {
+    try {
+      const res = await api.get('/routes');
+      const items = (res.data || []).map(r => ({ _id: String(r._id), name: r.name || '(unnamed route)' }));
+      setRoutes(items);
+      setRouteMap(Object.fromEntries(items.map(r => [r._id, r.name])));
+    } catch (e) {
+      console.error(e);
+      // keep UI usable even if routes fail to load
+    }
+  }
+
   // Derived filter
   useEffect(() => {
     let tmp = [...list];
     if (search.trim()) {
       const q = search.trim().toLowerCase();
       tmp = tmp.filter((o) =>
-        [o.sourceCode, o.sourceName, o.city, o.state, o.contactName]
+        [
+          o.loadSourceCd, o.name, o.city, o.stateCd, o.area, o.pin?.toString(),
+          o.add1, o.add2, o.add3,
+          ...(o.routeIds || []).map(id => routeMap[id]) // search by route name too
+        ]
           .filter(Boolean)
           .some((v) => String(v).toLowerCase().includes(q))
       );
     }
-    if (status !== 'ALL') {
-      const want = status === 'ACTIVE';
-      tmp = tmp.filter((o) => !!o.isActive === want);
-    }
     setFiltered(tmp.sort(sortSmart));
-  }, [search, status, list]);
+  }, [search, list, routeMap]);
 
-  // Open create modal
   const openCreate = () => {
     setEditingId(null);
     setForm(emptyForm);
     setIsOpen(true);
   };
 
-  // Open edit modal (fetch full document to be safe)
   const openEdit = async (id) => {
     try {
       const res = await api.get(`${BASE}/${id}`);
       const o = res.data || {};
       setEditingId(id);
       setForm({
-        sourceCode: o.sourceCode ?? '',
-        sourceName: o.sourceName ?? '',
-        address: o.address ?? '',
+        loadSourceCd: o.loadSourceCd ?? '',
+        name: o.name ?? '',
+        add1: o.add1 ?? '',
+        add2: o.add2 ?? '',
+        add3: o.add3 ?? '',
+        area: o.area ?? '',
         city: o.city ?? '',
-        state: o.state ?? '',
-        contactName: o.contactName ?? '',
-        contactPhone: o.contactPhone ?? '',
-        isActive: typeof o.isActive === 'boolean' ? o.isActive : true
+        pin: o.pin ?? '',
+        stateCd: o.stateCd ?? '',
+        routeIds: Array.isArray(o.routeIds) ? o.routeIds.map(String) : []
       });
       setIsOpen(true);
     } catch (e) {
@@ -137,30 +150,49 @@ export default function LoadingSourceMaster() {
     setEditingId(null);
   };
 
-  const onChange = (field, value) => {
-    setForm((f) => ({ ...f, [field]: value }));
+  const onChange = (field, value) => setForm((f) => ({ ...f, [field]: value }));
+  const onChangeCode  = (v) => onChange('loadSourceCd', v.toUpperCase().slice(0, 3));
+  const onChangeState = (v) => onChange('stateCd', v.toUpperCase().slice(0, 2));
+  const onChangePin   = (v) => onChange('pin', v.replace(/\D/g, ''));
+
+  // NEW: handle multi-select dropdown change
+  const onRoutesChange = (e) => {
+    const selected = Array.from(e.target.selectedOptions).map(opt => opt.value);
+    setForm(f => ({ ...f, routeIds: selected }));
   };
 
   const canSave = useMemo(() => {
-    // light validation
-    return form.sourceName.trim().length > 0 && form.sourceCode.trim().length > 0;
-  }, [form.sourceName, form.sourceCode]);
+    const codeOk  = form.loadSourceCd.trim().length > 0 && form.loadSourceCd.trim().length <= 3;
+    const nameOk  = form.name.trim().length > 0;
+    const stateOk = form.stateCd === '' || form.stateCd.length === 2;
+    const pinOk   = form.pin === '' || /^\d+$/.test(String(form.pin));
+    return codeOk && nameOk && stateOk && pinOk;
+  }, [form.loadSourceCd, form.name, form.stateCd, form.pin]);
 
   const onSave = async () => {
     if (!canSave) return;
     setSaving(true);
     try {
-      const payload = { ...form };
-      if (editingId) {
-        await api.put(`${BASE}/${editingId}`, payload);
-      } else {
-        await api.post(BASE, payload);
-      }
+      const payload = {
+        loadSourceCd: form.loadSourceCd.trim().toUpperCase(),
+        name: form.name.trim(),
+        add1: form.add1?.trim() || '',
+        add2: form.add2?.trim() || '',
+        add3: form.add3?.trim() || '',
+        area: form.area?.trim() || '',
+        city: form.city?.trim() || '',
+        stateCd: form.stateCd.trim().toUpperCase(),
+        ...(form.pin !== '' ? { pin: Number(form.pin) } : {}),
+        routeIds: form.routeIds
+      };
+      if (editingId) await api.put(`${BASE}/${editingId}`, payload);
+      else await api.post(BASE, payload);
+
       closeModal();
       await fetchAll();
     } catch (e) {
       console.error(e);
-      alert('Failed to save. Please check your input and try again.');
+      alert(e?.response?.data?.error || e?.response?.data?.message || 'Failed to save.');
     } finally {
       setSaving(false);
     }
@@ -177,37 +209,28 @@ export default function LoadingSourceMaster() {
     }
   };
 
+  const addr = (o) => [o.add1, o.add2, o.add3].filter(Boolean).join(', ');
+  const renderRoutes = (ids) => (ids || []).map(id => routeMap[id]).filter(Boolean).join(', ');
+
+  // size for the multi-select (shows between 4 and 8 rows)
+  const selectSize = Math.max(4, Math.min(8, routes.length || 0));
+
   return (
     <div className="p-6 bg-gray-50 min-h-screen">
       <h2 className="text-2xl font-semibold mb-4">Loading Source Master</h2>
 
-      {error && (
-        <div className="bg-red-100 text-red-700 p-3 rounded mb-4">{error}</div>
-      )}
+      {error && <div className="bg-red-100 text-red-700 p-3 rounded mb-4">{error}</div>}
 
-      {/* Top Bar: Search + Filters + Create */}
+      {/* Top Bar */}
       <div className="flex flex-col md:flex-row md:items-center gap-3 mb-4">
         <div className="flex items-center border bg-white rounded px-2">
           <Search size={16} />
           <input
-            placeholder="Search by code, name, city, contact…"
+            placeholder="Search by code, name, city, state, area, PIN, route…"
             value={search}
             onChange={(e) => setSearch(e.target.value)}
             className="px-2 py-1 outline-none"
           />
-        </div>
-
-        <div className="flex items-center gap-2">
-          <label className="text-sm text-gray-600">Status:</label>
-          <select
-            value={status}
-            onChange={(e) => setStatus(e.target.value)}
-            className="border rounded px-2 py-1 bg-white"
-          >
-            <option value="ALL">All</option>
-            <option value="ACTIVE">Active</option>
-            <option value="INACTIVE">Inactive</option>
-          </select>
         </div>
 
         <div className="md:ml-auto">
@@ -226,61 +249,37 @@ export default function LoadingSourceMaster() {
           <thead>
             <tr className="bg-gray-200">
               <th className="px-4 py-2 text-left">Code</th>
-              <th className="px-4 py-2 text-left">Source Name</th>
-              <th className="px-4 py-2 text-left">City / State</th>
-              <th className="px-4 py-2 text-left">Contact</th>
-              <th className="px-4 py-2 text-left">Phone</th>
-              <th className="px-4 py-2 text-center">Active</th>
+              <th className="px-4 py-2 text-left">Name</th>
+              <th className="px-4 py-2 text-left">Address</th>
+              <th className="px-4 py-2 text-left">Area</th>
+              <th className="px-4 py-2 text-left">City</th>
+              <th className="px-4 py-2 text-left">State</th>
+              <th className="px-4 py-2 text-left">PIN</th>
+              <th className="px-4 py-2 text-left">Routes</th>
               <th className="px-4 py-2 text-center">Actions</th>
             </tr>
           </thead>
           <tbody>
             {loading ? (
-              <tr>
-                <td className="px-4 py-6 text-center" colSpan={7}>
-                  Loading…
-                </td>
-              </tr>
+              <tr><td className="px-4 py-6 text-center" colSpan={9}>Loading…</td></tr>
             ) : filtered.length === 0 ? (
-              <tr>
-                <td className="px-4 py-6 text-center text-gray-500" colSpan={7}>
-                  No records found.
-                </td>
-              </tr>
+              <tr><td className="px-4 py-6 text-center text-gray-500" colSpan={9}>No records found.</td></tr>
             ) : (
               filtered.map((o) => (
                 <tr key={o._id} className="hover:bg-gray-50">
-                  <td className="border-t px-4 py-2">{o.sourceCode}</td>
-                  <td className="border-t px-4 py-2">{o.sourceName}</td>
-                  <td className="border-t px-4 py-2">
-                    {[o.city, o.state].filter(Boolean).join(', ')}
-                  </td>
-                  <td className="border-t px-4 py-2">{o.contactName}</td>
-                  <td className="border-t px-4 py-2">{o.contactPhone}</td>
-                  <td className="border-t px-4 py-2 text-center">
-                    {o.isActive ? (
-                      <span className="inline-block text-xs px-2 py-1 rounded bg-green-100 text-green-800">
-                        Active
-                      </span>
-                    ) : (
-                      <span className="inline-block text-xs px-2 py-1 rounded bg-gray-100 text-gray-700">
-                        Inactive
-                      </span>
-                    )}
-                  </td>
+                  <td className="border-t px-4 py-2">{o.loadSourceCd}</td>
+                  <td className="border-t px-4 py-2">{o.name}</td>
+                  <td className="border-t px-4 py-2">{addr(o)}</td>
+                  <td className="border-t px-4 py-2">{o.area}</td>
+                  <td className="border-t px-4 py-2">{o.city}</td>
+                  <td className="border-t px-4 py-2">{o.stateCd}</td>
+                  <td className="border-t px-4 py-2">{o.pin}</td>
+                  <td className="border-t px-4 py-2">{renderRoutes(o.routeIds)}</td>
                   <td className="border-t px-4 py-2 text-center space-x-2">
-                    <button
-                      onClick={() => openEdit(o._id)}
-                      className="text-blue-600 hover:text-blue-800"
-                      title="Edit"
-                    >
+                    <button onClick={() => openEdit(o._id)} className="text-blue-600 hover:text-blue-800" title="Edit">
                       <Edit3 size={16} />
                     </button>
-                    <button
-                      onClick={() => onDelete(o._id)}
-                      className="text-red-600 hover:text-red-800"
-                      title="Delete"
-                    >
+                    <button onClick={() => onDelete(o._id)} className="text-red-600 hover:text-red-800" title="Delete">
                       <Trash2 size={16} />
                     </button>
                   </td>
@@ -294,93 +293,71 @@ export default function LoadingSourceMaster() {
       {/* Create/Edit Modal */}
       {isOpen && (
         <div className="fixed inset-0 z-50 flex items-center justify-center">
-          {/* Backdrop */}
-          <div
-            className="absolute inset-0 bg-black/40"
-            onClick={saving ? undefined : closeModal}
-          />
-          {/* Card */}
-          <div className="relative z-10 w-[95%] md:w-[720px] bg-white rounded shadow-lg">
+          <div className="absolute inset-0 bg-black/40" onClick={saving ? undefined : closeModal} />
+          <div className="relative z-10 w-[95%] md:w-[900px] bg-white rounded shadow-lg">
             <div className="flex items-center justify-between px-5 py-3 border-b">
-              <h3 className="text-lg font-semibold">
-                {editingId ? 'Edit Loading Source' : 'New Loading Source'}
-              </h3>
-              <button
-                className="p-1 rounded hover:bg-gray-100"
-                onClick={closeModal}
-                disabled={saving}
-                title="Close"
-              >
+              <h3 className="text-lg font-semibold">{editingId ? 'Edit Loading Source' : 'New Loading Source'}</h3>
+              <button className="p-1 rounded hover:bg-gray-100" onClick={closeModal} disabled={saving} title="Close">
                 <X size={18} />
               </button>
             </div>
 
-            <div className="p-5 grid grid-cols-1 md:grid-cols-2 gap-4">
-              <TextField
-                label="Source Code"
-                value={form.sourceCode}
-                onChange={(v) => onChange('sourceCode', v)}
-                required
-              />
-              <TextField
-                label="Source Name"
-                value={form.sourceName}
-                onChange={(v) => onChange('sourceName', v)}
-                required
-              />
-              <TextField
-                label="City"
-                value={form.city}
-                onChange={(v) => onChange('city', v)}
-              />
-              <TextField
-                label="State"
-                value={form.state}
-                onChange={(v) => onChange('state', v)}
-              />
-              <TextField
-                label="Address"
-                value={form.address}
-                onChange={(v) => onChange('address', v)}
-                colSpan
-              />
-              <TextField
-                label="Contact Name"
-                value={form.contactName}
-                onChange={(v) => onChange('contactName', v)}
-              />
-              <TextField
-                label="Contact Phone"
-                value={form.contactPhone}
-                onChange={(v) => onChange('contactPhone', v)}
-              />
-              <div className="flex items-center gap-2">
-                <input
-                  id="isActive"
-                  type="checkbox"
-                  checked={!!form.isActive}
-                  onChange={(e) => onChange('isActive', e.target.checked)}
-                  className="h-4 w-4"
-                />
-                <label htmlFor="isActive" className="text-sm text-gray-700">
-                  Active
-                </label>
+            <div className="p-5 grid grid-cols-1 md:grid-cols-3 gap-4">
+              <TextField label="Source Code (max 3)" value={form.loadSourceCd} onChange={onChangeCode} required />
+              <TextField label="Name" value={form.name} onChange={(v) => onChange('name', v)} required colSpan />
+              <TextField label="Address Line 1" value={form.add1} onChange={(v) => onChange('add1', v)} colSpan />
+              <TextField label="Address Line 2" value={form.add2} onChange={(v) => onChange('add2', v)} colSpan />
+              <TextField label="Address Line 3" value={form.add3} onChange={(v) => onChange('add3', v)} colSpan />
+              <TextField label="Area" value={form.area} onChange={(v) => onChange('area', v)} />
+              <TextField label="City" value={form.city} onChange={(v) => onChange('city', v)} />
+              <TextField label="State Code (2)" value={form.stateCd} onChange={onChangeState} />
+              <TextField label="PIN" value={form.pin} onChange={onChangePin} type="number" />
+
+              {/* NEW: Routes multi-select dropdown */}
+              <div className="md:col-span-3">
+                <label className="block text-sm text-gray-600 mb-1">Routes</label>
+                <select
+                  multiple
+                  size={selectSize}
+                  value={form.routeIds}
+                  onChange={onRoutesChange}
+                  className="w-full border rounded px-3 py-2 bg-gray-50"
+                  disabled={routes.length === 0}
+                >
+                  {routes.map(r => (
+                    <option key={r._id} value={r._id}>
+                      {r.name}
+                    </option>
+                  ))}
+                </select>
+                {routes.length === 0 && (
+                  <p className="text-sm text-gray-500 mt-1">No routes found.</p>
+                )}
+                <div className="mt-2 flex gap-2">
+                  <button
+                    type="button"
+                    className="text-xs px-2 py-1 border rounded"
+                    onClick={() => setForm(f => ({ ...f, routeIds: routes.map(r => r._id) }))}
+                    disabled={routes.length === 0}
+                  >
+                    Select all
+                  </button>
+                  <button
+                    type="button"
+                    className="text-xs px-2 py-1 border rounded"
+                    onClick={() => setForm(f => ({ ...f, routeIds: [] }))}
+                  >
+                    Clear
+                  </button>
+                </div>
               </div>
             </div>
 
             <div className="px-5 pb-5 flex items-center justify-end gap-2">
-              <button
-                onClick={closeModal}
-                disabled={saving}
-                className="px-4 py-2 rounded bg-gray-200 text-gray-800 hover:bg-gray-300 disabled:opacity-50"
-              >
+              <button onClick={closeModal} disabled={saving} className="px-4 py-2 rounded bg-gray-200 text-gray-800 hover:bg-gray-300 disabled:opacity-50">
                 Cancel
               </button>
-              <button
-                onClick={onSave}
-                disabled={!canSave || saving}
-                className="px-4 py-2 rounded bg-blue-600 text-white hover:bg-blue-700 disabled:opacity-50"
-              >
+              <button onClick={onSave} disabled={!canSave || saving} className="px-4 py-2 rounded bg-blue-600 text-white hover:bg-blue-700 disabled:opacity-50">
                 {saving ? 'Saving…' : editingId ? 'Save Changes' : 'Create'}
               </button>
             </div>
@@ -391,8 +368,7 @@ export default function LoadingSourceMaster() {
   );
 }
 
-/* -------------------- small field component -------------------- */
-function TextField({ label, value, onChange, required = false, colSpan = false }) {
+function TextField({ label, value, onChange, required = false, colSpan = false, type = 'text' }) {
   return (
     <div className={colSpan ? 'md:col-span-2' : ''}>
       <label className="block text-sm text-gray-600 mb-1">
@@ -403,6 +379,7 @@ function TextField({ label, value, onChange, required = false, colSpan = false }
         value={value}
         onChange={(e) => onChange(e.target.value)}
         placeholder={label}
+        type={type}
       />
     </div>
   );

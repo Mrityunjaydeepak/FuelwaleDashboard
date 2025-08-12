@@ -1,3 +1,5 @@
+// src/components/TripManager.jsx
+
 import React, { useState, useEffect, useMemo } from 'react';
 import api from '../api';
 import { TruckIcon } from 'lucide-react';
@@ -48,6 +50,13 @@ export default function TripManager() {
 
   const toNum = v => Number(v) || 0;
 
+  // helper: extract the last 3 digits (serial NNN)
+  const extractSerial = (tn) => {
+    const s = String(tn || '');
+    const m = s.match(/(\d{3})$/); // only the final 3 digits
+    return m ? parseInt(m[1], 10) : NaN;
+  };
+
   // ── 1) Fetch lookups (incl. customers) & normalize trips ──
   useEffect(() => {
     (async () => {
@@ -92,14 +101,7 @@ export default function TripManager() {
     setSendCapacity(totalQty);
   }, [assignOrderId, orders]);
 
-  // helper: extract trailing number from a trip string
-  const extractSuffix = (tn) => {
-    if (typeof tn !== 'string') return NaN;
-    const m = tn.match(/(\d+)\s*$/);
-    return m ? parseInt(m[1], 10) : NaN;
-  };
-
-  // ── 3) Generate tripNo (GLOBAL serial) ────────────────────
+  // ── 3) Generate tripNo (SS + DDD + NNN) — NNN is always 3 digits ──────────
   useEffect(() => {
     let cancelled = false;
 
@@ -109,54 +111,48 @@ export default function TripManager() {
       const ord = orders.find(o => String(o._id) === String(assignOrderId));
       if (!ord?.customer) { setTripNo(''); return; }
 
-      // full customer by id (orders only has partial customer)
+      // full customer (orders may have only partial)
       const custIdFromOrder =
         (typeof ord.customer === 'object' ? ord.customer._id : ord.customer) || '';
       const fullCust = customers.find(c => String(c._id) === String(custIdFromOrder));
 
-      // SS: billStateCd (digits only), fallback "00"
+      // SS: billStateCd digits (fallback "00")
       const stateRaw = fullCust?.billStateCd ?? '';
       const stateCd  = String(stateRaw).replace(/\D/g, '').slice(0, 2).padStart(2, '0');
 
-      // DDD: depot (3 digits)
+      // DDD: depot digits (fallback "000")
       const depotRaw = (ord.customer?.depotCd ?? fullCust?.depotCd ?? '');
       const depotCd  = String(depotRaw).replace(/\D/g, '').slice(0, 3).padStart(3, '0');
 
-      // refresh trips from server to get the latest max serial
+      // refresh trips for latest serials
       let freshTrips = [];
       try {
         const t = await api.get('/trips');
         freshTrips = (t.data || []).map(tr => ({ ...tr, tripNo: tr.tripNo ?? tr.tripNumber }));
       } catch {
-        // ignore; we'll use whatever is cached
+        // ignore; use cached
       }
 
-      // merge and de-dup by tripNo
+      // merge + dedup by tripNo
       const merged = [...freshTrips, ...allTrips].filter(Boolean);
       const dedup = new Map();
-      for (const tr of merged) {
-        if (tr?.tripNo && !dedup.has(tr.tripNo)) dedup.set(tr.tripNo, tr);
-      }
+      for (const tr of merged) if (tr?.tripNo && !dedup.has(tr.tripNo)) dedup.set(tr.tripNo, tr);
       const trips = Array.from(dedup.values());
 
-      // GLOBAL next serial: 1 + max(trailing number across all trips)
-      const suffixes = trips.map(t => extractSuffix(t.tripNo)).filter(Number.isFinite);
-      const next = suffixes.length ? Math.max(...suffixes) + 1 : 1;
-
-      // pad to at least 3 digits (grows naturally beyond 999)
-      const nnn = String(next).padStart(Math.max(3, String(next).length), '0');
-      const candidate = `${stateCd}${depotCd}${nnn}`;
+      // Next serial = (max last-3-digits) + 1; start at 000; wrap at 1000
+      const suffixes = trips.map(t => extractSerial(t.tripNo)).filter(Number.isFinite);
+      const next = suffixes.length ? (Math.max(...suffixes) + 1) % 1000 : 0;
+      const nnn = String(next).padStart(3, '0');
 
       if (!cancelled) {
-        setTripNo(candidate);
-        setAllTrips(trips); // keep freshest cache
+        setTripNo(`${stateCd}${depotCd}${nnn}`);
+        setAllTrips(trips);
       }
     };
 
     run();
     return () => { cancelled = true; };
-    // dependencies: when order/customers change, recompute; do NOT include allTrips to avoid loops
-  }, [assignOrderId, orders, customers]);
+  }, [assignOrderId, orders, customers]); // (not including allTrips to avoid loop)
 
   // ── Helpers ───────────────────────────────────
   const vehiclesOnRoute = useMemo(
@@ -177,7 +173,7 @@ export default function TripManager() {
     }
     try {
       const res = await api.post('/trips/assign', {
-        tripNo,
+        tripNo,                         // server will save exactly this
         orderId:   assignOrderId,
         routeId:   assignRouteId,
         vehicleNo: assignVehicleNo,
@@ -191,7 +187,7 @@ export default function TripManager() {
       setAssigned(true);
       setCreatedDeliveriesCount(seededDeliveriesCount);
 
-      // add the confirmed trip to cache so next serial increases
+      // cache tripNo so the next serial moves forward
       setAllTrips(prev => {
         const list = [{ tripNo: newTripNo }, ...prev];
         const m = new Map();
@@ -211,12 +207,13 @@ export default function TripManager() {
     setLoading(true);
     setError('');
 
+    const toN = (x) => Number(x);
     if (startKm === '' || totalizerStart === '') {
       setError('Start KM and totalizer are required');
       setLoading(false);
       return;
     }
-    if (toNum(startKm) < 0 || toNum(totalizerStart) < 0) {
+    if (toN(startKm) < 0 || toN(totalizerStart) < 0) {
       setError('Start KM and totalizer must be non-negative');
       setLoading(false);
       return;
@@ -247,17 +244,18 @@ export default function TripManager() {
     setLoading(true);
     setError('');
 
+    const toN = (x) => Number(x);
     if (endKm === '' || totalizerEnd === '') {
       setError('End KM and totalizer are required');
       setLoading(false);
       return;
     }
-    if (toNum(endKm) < toNum(startKm)) {
+    if (toN(endKm) < toN(startKm)) {
       setError('End KM cannot be less than Start KM');
       setLoading(false);
       return;
     }
-    if (toNum(totalizerEnd) < toNum(totalizerStart)) {
+    if (toN(totalizerEnd) < toN(totalizerStart)) {
       setError('Totalizer End cannot be less than Start');
       setLoading(false);
       return;
@@ -322,7 +320,7 @@ export default function TripManager() {
               className="w-full bg-gray-100 border px-3 py-2 rounded"
             />
             <p className="text-xs text-gray-500 mt-1">
-              Format: SS DDD NNN (State[Billing] + Depot + Global Serial)
+              Format: SS DDD NNN (State[Billing] + Depot + 3-digit Serial)
             </p>
           </div>
 
