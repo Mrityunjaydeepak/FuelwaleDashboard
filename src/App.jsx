@@ -21,6 +21,7 @@ import CustomerManagement from './components/CustomerManager';
 import UserManagement from './components/UserManager';
 import DriverManagement from './components/DriverManager';
 import EmployeeManagement from './components/EmployeeManager';
+import LoadingSourceMaster from './components/LoadingsourceManager';
 
 export default function App() {
   return (
@@ -50,6 +51,7 @@ export default function App() {
               <Route path='user-master' element={<UserManagement />} />
               <Route path='driver-master' element={<DriverManagement />} />
               <Route path='employee-master' element={<EmployeeManagement />} />
+              <Route path='loading-source-master' element={<LoadingSourceMaster />} />
             </Route>
           </Route>
         </Routes>

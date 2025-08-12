@@ -13,19 +13,21 @@ import {
 
 const navItems = [
   { to: '/',             label: 'Dashboard',    icon: <HomeIcon size={20}/>,    roles: ['a','s'] },
-  { to: '/create-user',  label: 'Create User',  icon: <UserPlus size={20}/>,    roles: ['a']    },
+  // { to: '/create-user',  label: 'Create User',  icon: <UserPlus size={20}/>,    roles: ['a']    },
   { to: '/create-depot', label: 'Create Depot', icon: <Building2 size={20}/>,   roles: ['a']    },
   { to: '/create-route', label: 'Create Route', icon: <RouteIcon size={20}/>,    roles: ['a']    },
   { to: '/create-order', label: 'Create Order', icon: <TruckIcon size={20}/>,    roles: ['a','s'] },
   { to: '/list-order',   label: 'List Orders',  icon: <RouteIcon size={20}/>,    roles: ['a','s'] },
   { to: '/trip-manager',   label: 'Trip Manager',  icon: <RouteIcon size={20}/>,    roles: ['a','s'] },
-  { to: '/driver-trips',   label: 'Driver Trips',  icon: <RouteIcon size={20}/>,    roles: ['a','d'] },
-  { to: '/driver-deliveries',   label: 'Driver Deliveries',  icon: <RouteIcon size={20}/>,    roles: ['a','d'] },
+  { to: '/driver-trips',   label: 'Driver Trips',  icon: <RouteIcon size={20}/>,    roles: ['d'] },
+  { to: '/driver-deliveries',   label: 'Driver Deliveries',  icon: <RouteIcon size={20}/>,    roles: ['d'] },
   { to: '/vehicle-master',   label: 'Vehicle Master',  icon: <RouteIcon size={20}/>,    roles: ['a'] },
   { to: '/customer-master',   label: 'Customer Master',  icon: <RouteIcon size={20}/>,    roles: ['a'] },
   { to: '/user-master',   label: 'User Master',  icon: <RouteIcon size={20}/>,    roles: ['a'] },
   { to: '/driver-master',   label: 'Driver Master',  icon: <RouteIcon size={20}/>,    roles: ['a'] },
   { to: '/employee-master',   label: 'Employee Master',  icon: <RouteIcon size={20}/>,    roles: ['a'] },
+  // { to: '/loading-source-master',   label: 'Loading Source Master',  icon: <RouteIcon size={20}/>,    roles: ['a'] },
+
 ];
 
 export default function NavBar() {

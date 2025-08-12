@@ -184,13 +184,13 @@ export default function OrdersList() {
                     </select>
                   </td>
                   <td className="border px-4 py-2 text-center space-x-2">
-                    <button
+                    {/* <button
                       onClick={() => handleAssignTrip(o._id)}
                       className="text-blue-600 hover:text-blue-800"
                       title="Assign Trip"
                     >
                       <Edit3 size={16} />
-                    </button>
+                    </button> */}
                     <button
                       onClick={() => handleDelete(o._id)}
                       className="text-red-600 hover:text-red-800"
