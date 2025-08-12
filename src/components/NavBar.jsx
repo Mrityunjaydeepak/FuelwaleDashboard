@@ -1,77 +1,187 @@
 // src/components/NavBar.jsx
-import React from 'react';
+import React, { useMemo, useState } from 'react';
 import { NavLink } from 'react-router-dom';
 import { useAuth } from '../contexts/AuthContext';
 import {
-  HomeIcon,
-  UserPlus,
+  Home,
   Building2,
-  RouteIcon,
-  TruckIcon,
-  LogOut
+  Route as RouteIcon,
+  Truck,
+  ClipboardList,
+  MapPinned,
+  Car,
+  Users,
+  UserCog,
+  IdCard,
+  BriefcaseBusiness,
+  Fuel,
+  LogOut,
+  ChevronLeft,
+  Menu
 } from 'lucide-react';
 
-const navItems = [
-  { to: '/',             label: 'Dashboard',    icon: <HomeIcon size={20}/>,    roles: ['a','s'] },
-  // { to: '/create-user',  label: 'Create User',  icon: <UserPlus size={20}/>,    roles: ['a']    },
-  { to: '/create-depot', label: 'Create Depot', icon: <Building2 size={20}/>,   roles: ['a']    },
-  { to: '/create-route', label: 'Create Route', icon: <RouteIcon size={20}/>,    roles: ['a']    },
-  { to: '/create-order', label: 'Create Order', icon: <TruckIcon size={20}/>,    roles: ['a','e'] },
-  { to: '/list-order',   label: 'List Orders',  icon: <RouteIcon size={20}/>,    roles: ['a','e'] },
-  { to: '/trip-manager',   label: 'Trip Manager',  icon: <RouteIcon size={20}/>,    roles: ['a','e'] },
-  { to: '/driver-trips',   label: 'Driver Trips',  icon: <RouteIcon size={20}/>,    roles: ['d'] },
-  { to: '/driver-deliveries',   label: 'Driver Deliveries',  icon: <RouteIcon size={20}/>,    roles: ['d'] },
-  { to: '/vehicle-master',   label: 'Vehicle Master',  icon: <RouteIcon size={20}/>,    roles: ['a'] },
-  { to: '/customer-master',   label: 'Customer Master',  icon: <RouteIcon size={20}/>,    roles: ['a'] },
-  { to: '/user-master',   label: 'User Master',  icon: <RouteIcon size={20}/>,    roles: ['a'] },
-  { to: '/driver-master',   label: 'Driver Master',  icon: <RouteIcon size={20}/>,    roles: ['a'] },
-  { to: '/employee-master',   label: 'Employee Master',  icon: <RouteIcon size={20}/>,    roles: ['a'] },
-  { to: '/loading-source-master',   label: 'Loading Source Master',  icon: <RouteIcon size={20}/>,    roles: ['a'] },
-  { to: '/trip-listing',   label: 'Trip Listing',  icon: <RouteIcon size={20}/>,    roles: ['a','e'] },
+function roleOf(user) {
+  // normalize to 'a' | 'e' | 'd'
+  const raw = (user?.userType || '').toString().toLowerCase();
+  if (['a', 'e', 'd'].includes(raw)) return raw;
+  return 'a';
+}
 
+// Define your nav in one place (roles: 'a' admin, 'e' executive, 'd' driver)
+const NAV_GROUPS = [
+  {
+    heading: 'Overview',
+    items: [
+      { to: '/',                 label: 'Dashboard',              icon: Home,           roles: ['a','e','d'] },
+    ]
+  },
+  {
+    heading: 'Operations',
+    items: [
+      { to: '/create-order',     label: 'Create Order',           icon: Truck,          roles: ['a','e'] },
+      { to: '/list-order',       label: 'List Orders',            icon: ClipboardList,  roles: ['a','e'] },
+      { to: '/trip-manager',     label: 'Trip Manager',           icon: MapPinned,      roles: ['a','e'] },
+      { to: '/trip-listing',     label: 'Trip Listing',           icon: RouteIcon,      roles: ['a','e'] },
+      { to: '/driver-trips',     label: 'Driver Trips',           icon: Car,            roles: ['d'] },
+      { to: '/driver-deliveries',label: 'Driver Deliveries',      icon: ClipboardList,  roles: ['d'] },
+    ]
+  },
+  {
+    heading: 'Masters',
+    items: [
+      { to: '/create-depot',           label: 'Create Depot',           icon: Building2,        roles: ['a'] },
+      { to: '/create-route',           label: 'Create Route',           icon: RouteIcon,        roles: ['a'] },
+      { to: '/vehicle-master',         label: 'Vehicle Master',         icon: Car,              roles: ['a'] },
+      { to: '/customer-master',        label: 'Customer Master',        icon: Users,            roles: ['a'] },
+      { to: '/user-master',            label: 'User Master',            icon: UserCog,          roles: ['a'] },
+      { to: '/driver-master',          label: 'Driver Master',          icon: IdCard,           roles: ['a'] },
+      { to: '/employee-master',        label: 'Employee Master',        icon: BriefcaseBusiness,roles: ['a'] },
+      { to: '/loading-source-master',  label: 'Loading Source Master',  icon: Fuel,             roles: ['a'] },
+    ]
+  }
 ];
 
 export default function NavBar() {
   const { user, logout } = useAuth();
-  const userType = user?.userType?.toLowerCase();  // 'a' or 's'
+  const role = roleOf(user);
+
+  const [collapsed, setCollapsed] = useState(false);
+
+  // Filter by role once
+  const groups = useMemo(() => {
+    return NAV_GROUPS.map(g => ({
+      heading: g.heading,
+      items: g.items.filter(i => i.roles.includes(role))
+    })).filter(g => g.items.length > 0);
+  }, [role]);
 
   return (
-    <aside className="w-64 bg-white shadow-lg min-h-screen flex flex-col">
-      <div className="p-6">
-        <h1 className="text-2xl font-extrabold text-blue-600">
-          FuelWale Admin
-        </h1>
+    <aside
+      className={[
+        'h-screen sticky top-0',
+        'bg-gradient-to-b from-slate-900 to-slate-800 text-white',
+        'flex flex-col border-r border-white/10',
+        collapsed ? 'w-20' : 'w-64',
+        'transition-[width] duration-200'
+      ].join(' ')}
+    >
+      {/* Brand / Collapse */}
+      <div className="flex items-center justify-between px-3 py-3">
+        <div className="flex items-center gap-3">
+          <div className="h-9 w-9 rounded-lg bg-white/10 flex items-center justify-center">
+            {/* tiny logo-ish box */}
+            <Fuel size={18} />
+          </div>
+          {!collapsed && (
+            <div className="leading-tight">
+              <div className="font-extrabold tracking-wide">FuelWale</div>
+              <div className="text-xs text-white/70 -mt-0.5">Admin Console</div>
+            </div>
+          )}
+        </div>
+        <button
+          onClick={() => setCollapsed(v => !v)}
+          className="inline-flex items-center justify-center rounded-md p-2 hover:bg-white/10"
+          title={collapsed ? 'Expand' : 'Collapse'}
+        >
+          {collapsed ? <Menu size={18} /> : <ChevronLeft size={18} />}
+        </button>
       </div>
 
-      <nav className="flex-1 px-2 space-y-1">
-        {navItems.map(({ to, label, icon, roles }) => (
-          // only render if this role is allowed
-          roles.includes(userType) ? (
-            <NavLink
-              key={to}
-              to={to}
-              className={({ isActive }) =>
-                `flex items-center gap-3 px-4 py-2 rounded-lg transition ${
-                  isActive
-                    ? 'bg-blue-100 text-blue-700 font-semibold'
-                    : 'text-gray-700 hover:bg-gray-100'
-                }`
-              }
-            >
-              {icon}
-              <span>{label}</span>
-            </NavLink>
-          ) : null
+      {/* Nav */}
+      <nav className="mt-2 flex-1 overflow-y-auto scrollbar-thin scrollbar-thumb-white/10 scrollbar-track-transparent">
+        {groups.map(({ heading, items }) => (
+          <div key={heading} className="px-2">
+            {/* Group heading */}
+            {!collapsed && (
+              <div className="px-3 py-2 text-[11px] uppercase tracking-wide text-white/50">
+                {heading}
+              </div>
+            )}
+
+            <ul className="space-y-1">
+              {items.map(({ to, label, icon: Icon }) => (
+                <li key={to}>
+                  <NavLink
+                    to={to}
+                    className={({ isActive }) =>
+                      [
+                        'group flex items-center gap-3 rounded-lg px-3 py-2',
+                        'transition-colors',
+                        isActive
+                          ? 'bg-white text-slate-900 shadow-sm'
+                          : 'text-white/90 hover:bg-white/10'
+                      ].join(' ')
+                    }
+                    title={collapsed ? label : undefined}
+                  >
+                    <div className="shrink-0 rounded-md bg-white/10 p-1.5 group-hover:bg-white/20">
+                      <Icon size={18} />
+                    </div>
+                    {!collapsed && (
+                      <span className="truncate">{label}</span>
+                    )}
+                  </NavLink>
+                </li>
+              ))}
+            </ul>
+
+            {/* subtle divider */}
+            <div className="my-3 border-t border-white/10" />
+          </div>
         ))}
       </nav>
 
-      <button
-        onClick={logout}
-        className="mt-auto mx-4 mb-6 flex items-center gap-2 text-red-600 hover:text-red-800"
-      >
-        <LogOut size={20} />
-        <span>Logout</span>
-      </button>
+      {/* User panel + Logout */}
+      <div className="p-3 mt-auto">
+        <div className="flex items-center gap-3 px-3 py-2 rounded-lg bg-white/5">
+          <div className="h-8 w-8 rounded-full bg-white/15 flex items-center justify-center">
+            <Users size={16} />
+          </div>
+          {!collapsed && (
+            <div className="min-w-0">
+              <div className="text-sm font-semibold truncate">
+                {user?.name || user?.username || 'User'}
+              </div>
+              <div className="text-xs text-white/70">
+                {role === 'a' ? 'Admin' : role === 'e' ? 'Executive' : 'Driver'}
+              </div>
+            </div>
+          )}
+        </div>
+
+        <button
+          onClick={logout}
+          className={[
+            'mt-3 w-full inline-flex items-center justify-center gap-2',
+            'rounded-lg px-3 py-2 bg-rose-500/90 hover:bg-rose-500',
+            'text-white transition-colors'
+          ].join(' ')}
+        >
+          <LogOut size={18} />
+          {!collapsed && <span>Logout</span>}
+        </button>
+      </div>
     </aside>
   );
 }
