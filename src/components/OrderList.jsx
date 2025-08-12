@@ -1,3 +1,5 @@
+// src/components/OrdersList.jsx
+
 import React, { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import api from '../api';
@@ -11,23 +13,35 @@ const STATUS_OPTIONS = [
 ];
 
 export default function OrdersList() {
-  const [orders, setOrders]       = useState([]);
-  const [filtered, setFiltered]   = useState([]);
-  const [search, setSearch]       = useState('');
-  const [from, setFrom]           = useState('');
-  const [to, setTo]               = useState('');
-  const [error, setError]         = useState(null);
-  const navigate                  = useNavigate();
+  const [orders, setOrders]     = useState([]);
+  const [filtered, setFiltered] = useState([]);
+  const [search, setSearch]     = useState('');
+  const [from, setFrom]         = useState('');
+  const [to, setTo]             = useState('');
+  const [error, setError]       = useState(null);
+  const navigate                = useNavigate();
 
-  useEffect(() => {
-    fetchAll();
-  }, []);
+  useEffect(fetchAll, []);
 
-  const fetchAll = () => {
+  function fetchAll() {
     api.get('/orders')
       .then(res => {
-        setOrders(res.data);
-        setFiltered(sortPendingFirst(res.data));
+        // Map the full order payload into the shape our table uses
+        const mapped = res.data.map(o => {
+          const items   = Array.isArray(o.items) ? o.items : [];
+          return {
+            _id:           o._id,
+            salesOrderNo:  o._id.slice(-6),
+            createdAt:     o.createdAt,
+            custCd:        o.customer?.custCd || '',
+            custName:      o.customer?.custName || '',
+            orderQty:      items.reduce((sum, i) => sum + (i.quantity || 0), 0),
+            orderType:     o.orderType || 'Regular',
+            orderStatus:   o.orderStatus || 'PENDING'
+          };
+        });
+        setOrders(mapped);
+        setFiltered(sortPendingFirst(mapped));
         setError(null);
       })
       .catch(err => {
@@ -41,7 +55,7 @@ export default function OrdersList() {
         setOrders([]);
         setFiltered([]);
       });
-  };
+  }
 
   const sortPendingFirst = list =>
     [...list].sort((a, b) =>
@@ -67,7 +81,7 @@ export default function OrdersList() {
       });
   };
 
-  // ** NEW **: Fetch order details & navigate to AssignTrip
+  // Fetch full order and navigate to TripManager, passing order details in state
   const handleAssignTrip = async (orderId) => {
     try {
       const res = await api.get(`/orders/${orderId}`);
@@ -80,9 +94,12 @@ export default function OrdersList() {
 
   // Filter + search
   useEffect(() => {
-    let temp = orders;
+    let temp = [...orders];
     if (search) {
-      temp = temp.filter(o => o.salesOrderNo?.includes(search));
+      temp = temp.filter(o =>
+        o.salesOrderNo.includes(search) ||
+        o.custName.toLowerCase().includes(search.toLowerCase())
+      );
     }
     if (from) {
       temp = temp.filter(o => new Date(o.createdAt) >= new Date(from));
@@ -97,20 +114,18 @@ export default function OrdersList() {
     <div className="p-6 bg-gray-50 min-h-screen">
       <h2 className="text-2xl font-semibold mb-4">Orders Dashboard</h2>
 
-      {error && (
+      {error ? (
         <div className="bg-red-100 text-red-700 p-3 rounded mb-4">
           {error}
         </div>
-      )}
-
-      {!error && (
+      ) : (
         <>
           {/* Search & Date Filters */}
           <div className="flex gap-4 mb-4">
             <div className="flex items-center border rounded px-2">
               <Search size={16} />
               <input
-                placeholder="Search Order No"
+                placeholder="Search Order No or Customer"
                 value={search}
                 onChange={e => setSearch(e.target.value)}
                 className="px-2 py-1 outline-none"
@@ -137,7 +152,7 @@ export default function OrdersList() {
                 <th className="px-4 py-2">Order No</th>
                 <th className="px-4 py-2">Date</th>
                 <th className="px-4 py-2">Customer</th>
-                <th className="px-4 py-2">Qty</th>
+                <th className="px-4 py-2">Qty (L)</th>
                 <th className="px-4 py-2">Type</th>
                 <th className="px-4 py-2">Status</th>
                 <th className="px-4 py-2">Actions</th>
@@ -150,9 +165,11 @@ export default function OrdersList() {
                   <td className="border px-4 py-2">
                     {new Date(o.createdAt).toLocaleDateString()}
                   </td>
-                  <td className="border px-4 py-2">{o.custCd}</td>
+                  <td className="border px-4 py-2">
+                    {o.custCd} — {o.custName}
+                  </td>
                   <td className="border px-4 py-2">{o.orderQty}</td>
-                  <td className="border px-4 py-2">{o.orderType || 'Regular'}</td>
+                  <td className="border px-4 py-2">{o.orderType}</td>
                   <td className="border px-4 py-2">
                     <select
                       value={o.orderStatus}
@@ -167,7 +184,6 @@ export default function OrdersList() {
                     </select>
                   </td>
                   <td className="border px-4 py-2 text-center space-x-2">
-                    {/* Assign Trip button */}
                     <button
                       onClick={() => handleAssignTrip(o._id)}
                       className="text-blue-600 hover:text-blue-800"
@@ -175,8 +191,6 @@ export default function OrdersList() {
                     >
                       <Edit3 size={16} />
                     </button>
-
-                    {/* Delete Order button */}
                     <button
                       onClick={() => handleDelete(o._id)}
                       className="text-red-600 hover:text-red-800"
