@@ -15,10 +15,11 @@ const STATUS = ['ASSIGNED', 'ACTIVE', 'COMPLETED'];
 
 export default function TripListings() {
   const [trips, setTrips] = useState([]);
-  const [filtered, setFiltered] = useState([]);
-
-  const [driversMap, setDriversMap] = useState({});
+  const [orders, setOrders] = useState([]);
+  const [customers, setCustomers] = useState([]);
   const [routesMap, setRoutesMap] = useState({});
+
+  const [filtered, setFiltered] = useState([]);
 
   const [search, setSearch] = useState('');
   const [statusFilter, setStatusFilter] = useState('ALL');
@@ -52,29 +53,26 @@ export default function TripListings() {
     setLoading(true);
     setErr(null);
     try {
-      // trips
-      const res = await api.get('/trips');
-      const list = (res.data || []).map(t => ({
+      const [tripsRes, ordersRes, customersRes, routesRes] = await Promise.all([
+        api.get('/trips'),
+        api.get('/orders'),
+        api.get('/customers'),
+        api.get('/routes').catch(() => ({ data: [] }))
+      ]);
+
+      const list = (tripsRes.data || []).map(t => ({
         ...t,
         createdAt: t.createdAt || t._id?.toString().slice(0,8) // fallback
       }));
+
       setTrips(list);
+      setOrders(ordersRes.data || []);
+      setCustomers(customersRes.data || []);
 
-      // drivers
-      try {
-        const dr = await api.get('/drivers');
-        const map = {};
-        (dr.data || []).forEach(d => { map[String(d._id)] = d.name || d.driverName || '—'; });
-        setDriversMap(map);
-      } catch(e) { /* non-blocking */ }
-
-      // routes
-      try {
-        const rr = await api.get('/routes');
-        const rmap = {};
-        (rr.data || []).forEach(r => { rmap[String(r._id)] = r.name || '—'; });
-        setRoutesMap(rmap);
-      } catch(e) { /* non-blocking */ }
+      // routes map (for start modal)
+      const rmap = {};
+      (routesRes.data || []).forEach(r => { rmap[String(r._id)] = r.name || '—'; });
+      setRoutesMap(rmap);
     } catch (e) {
       console.error(e);
       setErr('Failed to load trips. Please try again.');
@@ -84,20 +82,78 @@ export default function TripListings() {
     }
   }
 
-  // Filtering
+  // Helper maps
+  const ordersById = useMemo(() => {
+    const m = new Map();
+    (orders || []).forEach(o => m.set(String(o._id), o));
+    return m;
+  }, [orders]);
+
+  const customersById = useMemo(() => {
+    const m = new Map();
+    (customers || []).forEach(c => m.set(String(c._id), c));
+    return m;
+  }, [customers]);
+
+  // Build display rows combining Trip + Order + Customer
+  const rows = useMemo(() => {
+    return (trips || []).map(t => {
+      const order = ordersById.get(String(t.orderId)) || {};
+      const custId =
+        typeof order.customer === 'object'
+          ? order.customer?._id
+          : order.customer;
+      const cust = customersById.get(String(custId)) || {};
+
+      const firstItem = Array.isArray(order.items) ? (order.items[0] || {}) : {};
+      const totalQty = Array.isArray(order.items)
+        ? order.items.reduce((s, i) => s + (Number(i.quantity) || 0), 0)
+        : null;
+
+      const dateDely = order.deliveryDate || order.expectedDate || t.loginTime || t.createdAt || null;
+      const timeSlot = order.timeSlot || order.deliverySlot || order.slot || '';
+
+      return {
+        _id: t._id,
+        tripNo: t.tripNo,
+        createdAt: t.createdAt,
+        status: t.status,
+
+        custId: cust.custCd || cust.customerCode || '—',
+        custName: cust.custName || cust.name || '—',
+        shipToLoc: order.shipToAddress || order.shipTo || '—',
+
+        pdtCode: firstItem.productCode || firstItem.productId || '—',
+        pdtName: firstItem.productName || '—',
+        pdtQty: totalQty ?? firstItem.quantity ?? '—',
+        uom: firstItem.uom || 'Liter',
+
+        dateDely,
+        timeSlot,
+        orderStatus: order.orderStatus || '—',
+
+        vehicleAllotted: t?.snapshot?.vehicleNo || '—',
+        routeId: t.routeId
+      };
+    });
+  }, [trips, ordersById, customersById]);
+
+  // Filtering + sort
   useEffect(() => {
-    let tmp = [...trips];
+    let tmp = [...rows];
 
     if (search.trim()) {
       const q = search.trim().toLowerCase();
-      tmp = tmp.filter(t =>
+      tmp = tmp.filter(r =>
         [
-          t.tripNo,
-          t.vehicleNo,
-          t.capacity,
-          t.status,
-          driversMap[String(t.driverId)],
-          routesMap[String(t.routeId)]
+          r.tripNo,
+          r.custId,
+          r.custName,
+          r.shipToLoc,
+          r.pdtCode,
+          r.pdtName,
+          r.vehicleAllotted,
+          r.orderStatus
         ]
           .filter(Boolean)
           .some(v => String(v).toLowerCase().includes(q))
@@ -105,21 +161,20 @@ export default function TripListings() {
     }
 
     if (statusFilter !== 'ALL') {
-      tmp = tmp.filter(t => t.status === statusFilter);
+      tmp = tmp.filter(r => r.status === statusFilter);
     }
 
     if (from) {
       const f = new Date(from);
-      tmp = tmp.filter(t => new Date(t.createdAt) >= f);
+      tmp = tmp.filter(r => new Date(r.createdAt) >= f);
     }
     if (to) {
       const tt = new Date(to);
-      // include the whole day for "to"
       tt.setHours(23, 59, 59, 999);
-      tmp = tmp.filter(t => new Date(t.createdAt) <= tt);
+      tmp = tmp.filter(r => new Date(r.createdAt) <= tt);
     }
 
-    // Sort: ACTIVE first, then ASSIGNED, then COMPLETED, and newest first within each
+    // Sort: ACTIVE first, then ASSIGNED, then COMPLETED, newest first
     const rank = { ACTIVE: 0, ASSIGNED: 1, COMPLETED: 2 };
     tmp.sort((a, b) => {
       const r = (rank[a.status] ?? 9) - (rank[b.status] ?? 9);
@@ -128,23 +183,25 @@ export default function TripListings() {
     });
 
     setFiltered(tmp);
-  }, [trips, search, statusFilter, from, to, driversMap, routesMap]);
+  }, [rows, search, statusFilter, from, to]);
 
-  const driverName = (id) => driversMap[String(id)] || '—';
   const routeName  = (id) => routesMap[String(id)] || '—';
 
   // Actions
-  const openStart = (trip) => {
-    setSelTrip(trip);
+  const openStart = (tripRow) => {
+    // hydrate original trip to keep ids for API calls
+    const t = trips.find(x => x._id === tripRow._id);
+    setSelTrip(t || null);
     setStartKm('');
     setTotalizerStart('');
-    setRouteId(String(trip.routeId || '') || '');
-    setRemarks(trip.remarks || '');
+    setRouteId(String((t && t.routeId) || '') || '');
+    setRemarks((t && t.remarks) || '');
     setStartOpen(true);
   };
 
-  const openEnd = (trip) => {
-    setSelTrip(trip);
+  const openEnd = (tripRow) => {
+    const t = trips.find(x => x._id === tripRow._id);
+    setSelTrip(t || null);
     setEndKm('');
     setTotalizerEnd('');
     setEndOpen(true);
@@ -167,8 +224,6 @@ export default function TripListings() {
     try {
       await api.post('/trips/login', {
         tripId: selTrip._id,
-        driverId: selTrip.driverId,
-        vehicleNo: selTrip.vehicleNo,
         startKm: Number(startKm),
         totalizerStart: Number(totalizerStart),
         routeId,
@@ -263,7 +318,7 @@ export default function TripListings() {
         <div className="flex items-center border bg-white rounded px-2">
           <Search size={16} />
           <input
-            placeholder="Search trip no, vehicle, driver, route…"
+            placeholder="Search cust, product, vehicle, trip no…"
             value={search}
             onChange={(e) => setSearch(e.target.value)}
             className="px-2 py-1 outline-none"
@@ -274,9 +329,9 @@ export default function TripListings() {
           value={statusFilter}
           onChange={(e) => setStatusFilter(e.target.value)}
           className="border rounded px-2 py-1 bg-white"
-          title="Status"
+          title="Trip Status"
         >
-          <option value="ALL">All Statuses</option>
+          <option value="ALL">All Trip Status</option>
           {STATUS.map(s => <option key={s} value={s}>{s}</option>)}
         </select>
 
@@ -298,59 +353,67 @@ export default function TripListings() {
 
       {/* Table */}
       <div className="overflow-x-auto bg-white shadow rounded">
-        <table className="min-w-full">
+        <table className="min-w-[1200px] w-full">
           <thead>
-            <tr className="bg-gray-200">
-              <th className="px-4 py-2 text-left">Trip No</th>
-              <th className="px-4 py-2 text-left">Date</th>
-              <th className="px-4 py-2 text-left">Driver</th>
-              <th className="px-4 py-2 text-left">Vehicle</th>
-              <th className="px-4 py-2 text-left">Route</th>
-              <th className="px-4 py-2 text-left">Capacity</th>
-              <th className="px-4 py-2 text-left">Status</th>
-              <th className="px-4 py-2 text-center">Actions</th>
+            <tr className="bg-yellow-300">
+              <Th>Cust Id</Th>
+              <Th>CustName</Th>
+              <Th>ShipToLoc</Th>
+              <Th>Pdt_Code</Th>
+              <Th>Pdt_Name</Th>
+              <Th>PdtQty</Th>
+              <Th>UoM</Th>
+              <Th>Date_Dely</Th>
+              <Th>Time Slot</Th>
+              <Th>Order Status</Th>
+              <Th>Vehicle Allotted</Th>
+              <Th className="text-center">Actions</Th>
             </tr>
           </thead>
           <tbody>
             {loading ? (
-              <tr><td className="px-4 py-6 text-center" colSpan={8}>Loading…</td></tr>
+              <tr><td className="px-4 py-6 text-center" colSpan={12}>Loading…</td></tr>
             ) : filtered.length === 0 ? (
-              <tr><td className="px-4 py-6 text-center text-gray-500" colSpan={8}>No trips found.</td></tr>
+              <tr><td className="px-4 py-6 text-center text-gray-500" colSpan={12}>No trips found.</td></tr>
             ) : (
-              filtered.map(t => (
-                <tr key={t._id} className="hover:bg-gray-50">
-                  <td className="border-t px-4 py-2">{t.tripNo}</td>
-                  <td className="border-t px-4 py-2">{new Date(t.createdAt).toLocaleDateString()}</td>
-                  <td className="border-t px-4 py-2">{driverName(t.driverId)}</td>
-                  <td className="border-t px-4 py-2">{t.vehicleNo}</td>
-                  <td className="border-t px-4 py-2">{routeName(t.routeId)}</td>
-                  <td className="border-t px-4 py-2">{t.capacity}</td>
-                  <td className="border-t px-4 py-2">{chip(t.status)}</td>
-                  <td className="border-t px-4 py-2 text-center">
-                    <div className="inline-flex items-center gap-2">
-                      {t.status === 'ASSIGNED' && (
+              filtered.map(r => (
+                <tr key={r._id} className="hover:bg-gray-50">
+                  <Td>{r.custId}</Td>
+                  <Td>{r.custName}</Td>
+                  <Td className="max-w-[280px] truncate" title={r.shipToLoc}>{r.shipToLoc}</Td>
+                  <Td>{r.pdtCode}</Td>
+                  <Td>{r.pdtName}</Td>
+                  <Td>{r.pdtQty ?? '—'}</Td>
+                  <Td>{r.uom}</Td>
+                  <Td>{r.dateDely ? new Date(r.dateDely).toLocaleDateString() : '—'}</Td>
+                  <Td>{r.timeSlot || '—'}</Td>
+                  <Td>{r.orderStatus}</Td>
+                  <Td>{r.vehicleAllotted}</Td>
+                  <Td>
+                    <div className="inline-flex items-center gap-2 justify-center">
+                      {r.status === 'ASSIGNED' && (
                         <button
                           className="text-green-600 hover:text-green-800"
                           title="Start (login)"
-                          onClick={() => openStart(t)}
+                          onClick={() => openStart(r)}
                         >
                           <Play size={18} />
                         </button>
                       )}
-                      {t.status === 'ACTIVE' && (
+                      {r.status === 'ACTIVE' && (
                         <button
                           className="text-yellow-700 hover:text-yellow-900"
                           title="Close (logout)"
-                          onClick={() => openEnd(t)}
+                          onClick={() => openEnd(r)}
                         >
                           <Square size={18} />
                         </button>
                       )}
-                      {t.status === 'COMPLETED' && (
+                      {r.status === 'COMPLETED' && (
                         <button
                           className="text-blue-600 hover:text-blue-800"
                           title="Download Invoice"
-                          onClick={() => downloadInvoice(t._id)}
+                          onClick={() => downloadInvoice(r._id)}
                         >
                           <FileText size={18} />
                         </button>
@@ -358,12 +421,15 @@ export default function TripListings() {
                       <button
                         className="text-red-600 hover:text-red-800"
                         title="Delete Trip"
-                        onClick={() => onDelete(t._id)}
+                        onClick={() => onDelete(r._id)}
                       >
                         <Trash2 size={18} />
                       </button>
                     </div>
-                  </td>
+                    <div className="mt-1">{chip(r.status)}</div>
+                    <div className="text-xs text-gray-500 mt-0.5">Trip: {r.tripNo}</div>
+                    <div className="text-xs text-gray-500">Route: {routeName(r.routeId)}</div>
+                  </Td>
                 </tr>
               ))
             )}
@@ -384,8 +450,8 @@ export default function TripListings() {
             </div>
 
             <div className="p-5 grid grid-cols-1 md:grid-cols-2 gap-4">
-              <Readonly label="Driver" value={driverName(selTrip.driverId)} />
-              <Readonly label="Vehicle" value={selTrip.vehicleNo} />
+              <Readonly label="Vehicle" value={selTrip?.snapshot?.vehicleNo || '—'} />
+              <Readonly label="Trip Status" value={selTrip.status} />
               <NumberField label="Start KM" value={startKm} onChange={setStartKm} required />
               <NumberField label="Totalizer Start" value={totalizerStart} onChange={setTotalizerStart} required />
               <div className="md:col-span-2">
@@ -439,8 +505,8 @@ export default function TripListings() {
             </div>
 
             <div className="p-5 grid grid-cols-1 md:grid-cols-2 gap-4">
-              <Readonly label="Driver" value={driverName(selTrip.driverId)} />
-              <Readonly label="Vehicle" value={selTrip.vehicleNo} />
+              <Readonly label="Vehicle" value={selTrip?.snapshot?.vehicleNo || '—'} />
+              <Readonly label="Trip Status" value={selTrip.status} />
               <NumberField label="End KM" value={endKm} onChange={setEndKm} required />
               <NumberField label="Totalizer End" value={totalizerEnd} onChange={setTotalizerEnd} required />
             </div>
@@ -462,7 +528,21 @@ export default function TripListings() {
   );
 }
 
-/* ---------- tiny inputs ---------- */
+/* ---------- tiny building blocks ---------- */
+function Th({ children, className = '' }) {
+  return (
+    <th className={`px-3 py-2 text-left font-semibold border border-black ${className}`}>
+      {children}
+    </th>
+  );
+}
+function Td({ children, className = '' }) {
+  return (
+    <td className={`px-3 py-2 border-t align-top ${className}`}>
+      {children}
+    </td>
+  );
+}
 function Readonly({ label, value }) {
   return (
     <div>

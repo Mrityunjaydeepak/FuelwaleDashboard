@@ -42,8 +42,11 @@ const NAV_GROUPS = [
       { to: '/list-order',       label: 'List Orders',            icon: ClipboardList,  roles: ['a','e'] },
       { to: '/trip-manager',     label: 'Trip Manager',           icon: MapPinned,      roles: ['a','e'] },
       { to: '/trip-listing',     label: 'Trip Listing',           icon: RouteIcon,      roles: ['a','e'] },
+      { to: '/fleet-listing',     label: 'Fleet Listing',           icon: RouteIcon,      roles: ['a','e'] },
       { to: '/driver-trips',     label: 'Driver Trips',           icon: Car,            roles: ['d'] },
       { to: '/driver-deliveries',label: 'Driver Deliveries',      icon: ClipboardList,  roles: ['d'] },
+      { to: '/invoice-deliveries',label: 'Invoice Deliveries',      icon: ClipboardList,  roles: ['a'] },
+      { to: '/payment-manager',label: 'Payment Manager',      icon: ClipboardList,  roles: ['a'] },
     ]
   },
   {
@@ -57,6 +60,7 @@ const NAV_GROUPS = [
       { to: '/driver-master',          label: 'Driver Master',          icon: IdCard,           roles: ['a'] },
       { to: '/employee-master',        label: 'Employee Master',        icon: BriefcaseBusiness,roles: ['a'] },
       { to: '/loading-source-master',  label: 'Loading Source Master',  icon: Fuel,             roles: ['a'] },
+      { to: '/vehicle-allocation-master',  label: 'Vehicle Allocation Master',  icon: Car,             roles: ['a'] },
     ]
   }
 ];

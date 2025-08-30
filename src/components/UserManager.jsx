@@ -9,6 +9,18 @@ import {
   XIcon
 } from 'lucide-react';
 
+// User type labels incl. new VA/TR/AC
+const USER_TYPE_OPTIONS = [
+  { value: 'E',  label: 'Employee' },
+  { value: 'D',  label: 'Driver' },
+  { value: 'C',  label: 'Customer' },
+  { value: 'A',  label: 'Admin' },
+  { value: 'VA', label: 'Vehicle Allocation' },
+  { value: 'TR', label: 'Trips' },
+  { value: 'AC', label: 'Accounts' }
+];
+const typeLabel = USER_TYPE_OPTIONS.reduce((m, o) => (m[o.value] = o.label, m), {});
+
 export default function UserManagement() {
   const initialForm = {
     userId:      '',
@@ -35,24 +47,36 @@ export default function UserManagement() {
   const [editForm, setEditForm]       = useState(initialForm);
   const [editLoading, setEditLoading] = useState(false);
 
+  const [adminBlocked, setAdminBlocked] = useState(false);
+
   // Load lookups & existing users
   useEffect(() => {
     (async () => {
       try {
-        const [d1, d2, d3, d4, d5] = await Promise.all([
+        const [d1, d2, d3, d4] = await Promise.all([
           api.get('/depots'),
           api.get('/employees'),
           api.get('/drivers'),
-          api.get('/customers'),
-          api.get('/users')
+          api.get('/customers')
         ]);
         setDepots(d1.data || []);
         setEmployees(d2.data || []);
         setDrivers(d3.data || []);
         setCustomers(d4.data || []);
-        setUsers(d5.data || []);
       } catch (e) {
-        setError('Failed to load data');
+        setError('Failed to load lookups');
+      }
+
+      try {
+        const d5 = await api.get('/users'); // Admin-only on backend
+        setUsers(d5.data || []);
+        setAdminBlocked(false);
+      } catch (e) {
+        if (e?.response?.status === 403) {
+          setAdminBlocked(true);
+        } else {
+          setError('Failed to load users');
+        }
       }
     })();
   }, []);
@@ -68,7 +92,7 @@ export default function UserManagement() {
     const { name, value } = e.target;
     setForm(f => {
       if (name === 'userType') {
-        // clear incompatible mapping fields when type changes
+        // clear mapping fields when switching type (only E/D/C use mappings)
         return { ...f, userType: value, empCd: '', driverId: '', customerId: '' };
       }
       return { ...f, [name]: value };
@@ -124,7 +148,7 @@ export default function UserManagement() {
     const { name, value } = e.target;
     setEditForm(f => {
       if (name === 'userType') {
-        // when switching type, clear other mapping fields
+        // clear mapping fields when switching type (only E/D/C use mappings)
         return { ...f, userType: value, empCd: '', driverId: '', customerId: '' };
       }
       return { ...f, [name]: value };
@@ -161,6 +185,13 @@ export default function UserManagement() {
         <h2 className="text-2xl font-semibold mb-4 flex items-center gap-2">
           <UserIcon size={24}/> User Management
         </h2>
+
+        {adminBlocked && (
+          <div className="mb-4 p-3 border border-yellow-300 bg-yellow-50 rounded text-yellow-800">
+            You need <b>Admin (userType A)</b> to create or view users.
+          </div>
+        )}
+
         {error && <div className="text-red-600 mb-4">{error}</div>}
 
         <form onSubmit={handleSubmit} className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
@@ -171,6 +202,7 @@ export default function UserManagement() {
             onChange={handleChange}
             required
             className="border rounded px-3 py-2"
+            disabled={adminBlocked}
           />
 
           <select
@@ -178,11 +210,11 @@ export default function UserManagement() {
             value={form.userType}
             onChange={handleChange}
             className="border rounded px-3 py-2"
+            disabled={adminBlocked}
           >
-            <option value="E">Employee</option>
-            <option value="D">Driver</option>
-            <option value="C">Customer</option>
-            <option value="A">Admin</option>
+            {USER_TYPE_OPTIONS.map(opt => (
+              <option key={opt.value} value={opt.value}>{opt.label}</option>
+            ))}
           </select>
 
           <input
@@ -193,6 +225,7 @@ export default function UserManagement() {
             onChange={handleChange}
             required
             className="border rounded px-3 py-2"
+            disabled={adminBlocked}
           />
 
           <input
@@ -202,6 +235,7 @@ export default function UserManagement() {
             onChange={handleChange}
             required
             className="border rounded px-3 py-2"
+            disabled={adminBlocked}
           />
 
           <select
@@ -210,6 +244,7 @@ export default function UserManagement() {
             onChange={handleChange}
             required
             className="border rounded px-3 py-2"
+            disabled={adminBlocked}
           >
             <option value="">Depot</option>
             {depots.map(d => (
@@ -219,7 +254,7 @@ export default function UserManagement() {
             ))}
           </select>
 
-          {/* Conditional mapping fields */}
+          {/* Conditional mapping fields (only for E/D/C) */}
           {form.userType === 'E' && (
             <select
               name="empCd"
@@ -227,6 +262,7 @@ export default function UserManagement() {
               onChange={handleChange}
               required
               className="border rounded px-3 py-2"
+              disabled={adminBlocked}
             >
               <option value="">Employee</option>
               {employees.map(e => (
@@ -244,6 +280,7 @@ export default function UserManagement() {
               onChange={handleChange}
               required
               className="border rounded px-3 py-2"
+              disabled={adminBlocked}
             >
               <option value="">Driver</option>
               {drivers.map(d => (
@@ -261,6 +298,7 @@ export default function UserManagement() {
               onChange={handleChange}
               required
               className="border rounded px-3 py-2"
+              disabled={adminBlocked}
             >
               <option value="">Customer</option>
               {customers.map(c => (
@@ -274,8 +312,8 @@ export default function UserManagement() {
           <div className="md:col-span-2 lg:col-span-4 flex justify-end gap-2">
             <button
               type="submit"
-              disabled={loading}
-              className="px-4 py-2 bg-green-600 text-white rounded hover:bg-green-700 transition"
+              disabled={loading || adminBlocked}
+              className="px-4 py-2 bg-green-600 text-white rounded hover:bg-green-700 transition disabled:opacity-50"
             >
               {loading
                 ? 'Adding…'
@@ -294,189 +332,195 @@ export default function UserManagement() {
           value={search}
           onChange={e => setSearch(e.target.value)}
           className="border rounded px-3 py-2 w-full md:w-1/3"
+          disabled={adminBlocked}
         />
       </div>
 
       <div className="bg-white p-4 rounded-lg shadow overflow-auto max-h-[500px]">
-        <table className="min-w-full divide-y divide-gray-200">
-          <thead className="sticky top-0 bg-gray-100 z-10">
-            <tr>
-              {['#','User ID','Type','Mobile','Depot','Mapping','Created','Actions'].map((h,i) => (
-                <th
-                  key={i}
-                  className="px-2 py-2 text-left text-sm font-semibold"
-                >
-                  {h}
-                </th>
-              ))}
-            </tr>
-          </thead>
-          <tbody>
-            {filtered.map((u, i) => (
-              <tr
-                key={u._id}
-                className={`${i % 2 === 0 ? 'bg-white' : 'bg-gray-50'} hover:bg-gray-100`}
-              >
-                {editingId === u._id ? (
-                  <td colSpan={8} className="px-3 py-3">
-                    <form onSubmit={submitEdit} className="grid grid-cols-1 md:grid-cols-3 lg:grid-cols-4 gap-3">
-                      <input
-                        name="userId"
-                        value={editForm.userId}
-                        onChange={handleEditChange}
-                        className="border rounded px-3 py-2"
-                        placeholder="User ID"
-                        disabled // typically immutable
-                      />
-
-                      <select
-                        name="userType"
-                        value={editForm.userType}
-                        onChange={handleEditChange}
-                        className="border rounded px-3 py-2"
-                      >
-                        <option value="E">Employee</option>
-                        <option value="D">Driver</option>
-                        <option value="C">Customer</option>
-                        <option value="A">Admin</option>
-                      </select>
-
-                      <input
-                        name="pwd"
-                        type="password"
-                        value={editForm.pwd}
-                        onChange={handleEditChange}
-                        className="border rounded px-3 py-2"
-                        placeholder="New password (optional)"
-                      />
-
-                      <input
-                        name="mobileNo"
-                        value={editForm.mobileNo}
-                        onChange={handleEditChange}
-                        className="border rounded px-3 py-2"
-                        placeholder="Mobile No"
-                      />
-
-                      <select
-                        name="depotCd"
-                        value={editForm.depotCd}
-                        onChange={handleEditChange}
-                        className="border rounded px-3 py-2"
-                      >
-                        <option value="">Depot</option>
-                        {depots.map(d => (
-                          <option key={d._id} value={d.depotCd}>
-                            {d.depotCd} — {d.depotName}
-                          </option>
-                        ))}
-                      </select>
-
-                      {/* mapping field depends on userType */}
-                      {editForm.userType === 'E' && (
-                        <select
-                          name="empCd"
-                          value={editForm.empCd}
-                          onChange={handleEditChange}
-                          className="border rounded px-3 py-2"
-                        >
-                          <option value="">Employee</option>
-                          {employees.map(e => (
-                            <option key={e._id} value={e.empCd}>
-                              {e.empCd} — {e.empName}
-                            </option>
-                          ))}
-                        </select>
-                      )}
-
-                      {editForm.userType === 'D' && (
-                        <select
-                          name="driverId"
-                          value={editForm.driverId}
-                          onChange={handleEditChange}
-                          className="border rounded px-3 py-2"
-                        >
-                          <option value="">Driver</option>
-                          {drivers.map(d => (
-                            <option key={d._id} value={d._id}>
-                              {d._id}
-                            </option>
-                          ))}
-                        </select>
-                      )}
-
-                      {editForm.userType === 'C' && (
-                        <select
-                          name="customerId"
-                          value={editForm.customerId}
-                          onChange={handleEditChange}
-                          className="border rounded px-3 py-2"
-                        >
-                          <option value="">Customer</option>
-                          {customers.map(c => (
-                            <option key={c._id} value={c._id}>
-                              {c.custCd} — {c.custName}
-                            </option>
-                          ))}
-                        </select>
-                      )}
-
-                      <div className="md:col-span-3 lg:col-span-4 flex justify-end gap-2">
-                        <button
-                          type="button"
-                          onClick={cancelEdit}
-                          disabled={editLoading}
-                          className="px-3 py-2 bg-gray-200 rounded flex items-center gap-1"
-                        >
-                          <XIcon size={16}/> Cancel
-                        </button>
-                        <button
-                          type="submit"
-                          disabled={editLoading}
-                          className="px-3 py-2 bg-blue-600 text-white rounded flex items-center gap-1"
-                        >
-                          {editLoading ? 'Saving…' : <><SaveIcon size={16}/> Save</>}
-                        </button>
-                      </div>
-                    </form>
-                  </td>
-                ) : (
-                  <>
-                    <td className="px-2 py-2 text-sm">{i + 1}</td>
-                    <td className="px-2 py-2 text-sm">{u.userId}</td>
-                    <td className="px-2 py-2 text-sm">{u.userType}</td>
-                    <td className="px-2 py-2 text-sm">{u.mobileNo}</td>
-                    <td className="px-2 py-2 text-sm">{u.depotCd}</td>
-                    <td className="px-2 py-2 text-sm">
-                      {u.userType === 'E' ? (u.employee?.empCd || '—')
-                        : u.userType === 'D' ? (u.driver?._id || '—')
-                        : u.userType === 'C' ? (u.customer?.custCd || '—')
-                        : '—'}
-                    </td>
-                    <td className="px-2 py-2 text-sm">
-                      {u.createdAt ? new Date(u.createdAt).toLocaleString() : '—'}
-                    </td>
-                    <td className="px-2 py-2 flex gap-2">
-                      <button onClick={() => startEdit(u)} title="Edit" className="p-1 hover:text-blue-600">
-                        <Edit2Icon size={16}/>
-                      </button>
-                      <button onClick={() => handleDelete(u._id)} title="Delete" className="p-1 hover:text-red-600">
-                        <Trash2Icon size={16}/>
-                      </button>
-                    </td>
-                  </>
-                )}
-              </tr>
-            ))}
-            {!filtered.length && (
+        {adminBlocked ? (
+          <div className="text-center text-gray-500 py-8">
+            Admin-only area.
+          </div>
+        ) : (
+          <table className="min-w-full divide-y divide-gray-200">
+            <thead className="sticky top-0 bg-gray-100 z-10">
               <tr>
-                <td colSpan={8} className="px-2 py-4 text-center text-sm text-gray-500">
-                  No users found.
-                </td>
+                {['#','User ID','Type','Mobile','Depot','Mapping','Created','Actions'].map((h,i) => (
+                  <th
+                    key={i}
+                    className="px-2 py-2 text-left text-sm font-semibold"
+                  >
+                    {h}
+                  </th>
+                ))}
               </tr>
-            )}
-          </tbody>
-        </table>
+            </thead>
+            <tbody>
+              {filtered.map((u, i) => (
+                <tr
+                  key={u._id}
+                  className={`${i % 2 === 0 ? 'bg-white' : 'bg-gray-50'} hover:bg-gray-100`}
+                >
+                  {editingId === u._id ? (
+                    <td colSpan={8} className="px-3 py-3">
+                      <form onSubmit={submitEdit} className="grid grid-cols-1 md:grid-cols-3 lg:grid-cols-4 gap-3">
+                        <input
+                          name="userId"
+                          value={editForm.userId}
+                          onChange={handleEditChange}
+                          className="border rounded px-3 py-2"
+                          placeholder="User ID"
+                          disabled // typically immutable
+                        />
+
+                        <select
+                          name="userType"
+                          value={editForm.userType}
+                          onChange={handleEditChange}
+                          className="border rounded px-3 py-2"
+                        >
+                          {USER_TYPE_OPTIONS.map(opt => (
+                            <option key={opt.value} value={opt.value}>{opt.label}</option>
+                          ))}
+                        </select>
+
+                        <input
+                          name="pwd"
+                          type="password"
+                          value={editForm.pwd}
+                          onChange={handleEditChange}
+                          className="border rounded px-3 py-2"
+                          placeholder="New password (optional)"
+                        />
+
+                        <input
+                          name="mobileNo"
+                          value={editForm.mobileNo}
+                          onChange={handleEditChange}
+                          className="border rounded px-3 py-2"
+                          placeholder="Mobile No"
+                        />
+
+                        <select
+                          name="depotCd"
+                          value={editForm.depotCd}
+                          onChange={handleEditChange}
+                          className="border rounded px-3 py-2"
+                        >
+                          <option value="">Depot</option>
+                          {depots.map(d => (
+                            <option key={d._id} value={d.depotCd}>
+                              {d.depotCd} — {d.depotName}
+                            </option>
+                          ))}
+                        </select>
+
+                        {/* mapping field depends on userType (only E/D/C) */}
+                        {editForm.userType === 'E' && (
+                          <select
+                            name="empCd"
+                            value={editForm.empCd}
+                            onChange={handleEditChange}
+                            className="border rounded px-3 py-2"
+                          >
+                            <option value="">Employee</option>
+                            {employees.map(e => (
+                              <option key={e._id} value={e.empCd}>
+                                {e.empCd} — {e.empName}
+                              </option>
+                            ))}
+                          </select>
+                        )}
+
+                        {editForm.userType === 'D' && (
+                          <select
+                            name="driverId"
+                            value={editForm.driverId}
+                            onChange={handleEditChange}
+                            className="border rounded px-3 py-2"
+                          >
+                            <option value="">Driver</option>
+                            {drivers.map(d => (
+                              <option key={d._id} value={d._id}>
+                                {d._id}
+                              </option>
+                            ))}
+                          </select>
+                        )}
+
+                        {editForm.userType === 'C' && (
+                          <select
+                            name="customerId"
+                            value={editForm.customerId}
+                            onChange={handleEditChange}
+                            className="border rounded px-3 py-2"
+                          >
+                            <option value="">Customer</option>
+                            {customers.map(c => (
+                              <option key={c._id} value={c._id}>
+                                {c.custCd} — {c.custName}
+                              </option>
+                            ))}
+                          </select>
+                        )}
+
+                        <div className="md:col-span-3 lg:col-span-4 flex justify-end gap-2">
+                          <button
+                            type="button"
+                            onClick={cancelEdit}
+                            disabled={editLoading}
+                            className="px-3 py-2 bg-gray-200 rounded flex items-center gap-1"
+                          >
+                            <XIcon size={16}/> Cancel
+                          </button>
+                          <button
+                            type="submit"
+                            disabled={editLoading}
+                            className="px-3 py-2 bg-blue-600 text-white rounded flex items-center gap-1"
+                          >
+                            {editLoading ? 'Saving…' : <><SaveIcon size={16}/> Save</>}
+                          </button>
+                        </div>
+                      </form>
+                    </td>
+                  ) : (
+                    <>
+                      <td className="px-2 py-2 text-sm">{i + 1}</td>
+                      <td className="px-2 py-2 text-sm">{u.userId}</td>
+                      <td className="px-2 py-2 text-sm">{typeLabel[u.userType] || u.userType}</td>
+                      <td className="px-2 py-2 text-sm">{u.mobileNo}</td>
+                      <td className="px-2 py-2 text-sm">{u.depotCd}</td>
+                      <td className="px-2 py-2 text-sm">
+                        {u.userType === 'E' ? (u.employee?.empCd || '—')
+                          : u.userType === 'D' ? (u.driver?._id || '—')
+                          : u.userType === 'C' ? (u.customer?.custCd || '—')
+                          : '—'}
+                      </td>
+                      <td className="px-2 py-2 text-sm">
+                        {u.createdAt ? new Date(u.createdAt).toLocaleString() : '—'}
+                      </td>
+                      <td className="px-2 py-2 flex gap-2">
+                        <button onClick={() => startEdit(u)} title="Edit" className="p-1 hover:text-blue-600">
+                          <Edit2Icon size={16}/>
+                        </button>
+                        <button onClick={() => handleDelete(u._id)} title="Delete" className="p-1 hover:text-red-600">
+                          <Trash2Icon size={16}/>
+                        </button>
+                      </td>
+                    </>
+                  )}
+                </tr>
+              ))}
+              {!filtered.length && (
+                <tr>
+                  <td colSpan={8} className="px-2 py-4 text-center text-sm text-gray-500">
+                    No users found.
+                  </td>
+                </tr>
+              )}
+            </tbody>
+          </table>
+        )}
       </div>
     </div>
   );

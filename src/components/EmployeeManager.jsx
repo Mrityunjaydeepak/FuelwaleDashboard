@@ -9,20 +9,24 @@ import {
   XIcon
 } from 'lucide-react';
 
+const ROLE_OPTIONS = ['admin', 'trip', 'vehicle', 'accounts', 'customer'];
+
 export default function EmployeeManagement() {
   const initialForm = {
     empCd:       '',
     empName:     '',
     depot:       '',
-    accessLevel: ''
+    accessLevel: '',
+    roles:       [],    // NEW
+    password:    ''     // NEW (required on create)
   };
 
-  const [form, setForm]             = useState(initialForm);
-  const [depots, setDepots]         = useState([]);
-  const [employees, setEmployees]   = useState([]);
-  const [search, setSearch]         = useState('');
-  const [loading, setLoading]       = useState(false);
-  const [error, setError]           = useState('');
+  const [form, setForm]               = useState(initialForm);
+  const [depots, setDepots]           = useState([]);
+  const [employees, setEmployees]     = useState([]);
+  const [search, setSearch]           = useState('');
+  const [loading, setLoading]         = useState(false);
+  const [error, setError]             = useState('');
 
   const [editingId, setEditingId]     = useState(null);
   const [editForm, setEditForm]       = useState(initialForm);
@@ -40,22 +44,44 @@ export default function EmployeeManagement() {
     e.empName.toLowerCase().includes(search.toLowerCase())
   );
 
+  // ---------- CREATE FORM HANDLERS ----------
   const handleChange = e => {
-    const { name, value } = e.target;
-    setForm(f => ({ ...f, [name]: value }));
+    const { name, value, type, checked } = e.target;
     setError('');
+
+    // roles via checkbox group
+    if (name === 'roles') {
+      setForm(f => {
+        const set = new Set(f.roles || []);
+        if (checked) set.add(value); else set.delete(value);
+        return { ...f, roles: Array.from(set) };
+      });
+      return;
+    }
+
+    setForm(f => ({ ...f, [name]: value }));
   };
 
   const handleSubmit = async e => {
     e.preventDefault();
     setLoading(true);
     try {
+      // Password required on create
+      if (!form.password || form.password.trim().length < 6) {
+        setError('Password is required (min 6 characters).');
+        setLoading(false);
+        return;
+      }
+
       await api.post('/employees', {
         empCd:       form.empCd,
         empName:     form.empName,
-        depot:       form.depot,
-        accessLevel: form.accessLevel
+        depot:       form.depot || null,
+        accessLevel: form.accessLevel === '' ? '' : Number(form.accessLevel),
+        roles:       form.roles && form.roles.length ? form.roles : undefined,
+        password:    form.password
       });
+
       const res = await api.get('/employees');
       setEmployees(res.data);
       setForm(initialForm);
@@ -66,23 +92,16 @@ export default function EmployeeManagement() {
     }
   };
 
-  const handleDelete = async id => {
-    if (!window.confirm('Delete this employee?')) return;
-    try {
-      await api.delete(`/employees/${id}`);
-      setEmployees(es => es.filter(e => e._id !== id));
-    } catch {
-      alert('Failed to delete employee');
-    }
-  };
-
+  // ---------- EDIT FORM HANDLERS ----------
   const startEdit = emp => {
     setEditingId(emp._id);
     setEditForm({
-      empCd:       emp.empCd,
-      empName:     emp.empName,
+      empCd:       emp.empCd || '',
+      empName:     emp.empName || '',
       depot:       emp.depotCd?._id || '',
-      accessLevel: emp.accessLevel
+      accessLevel: emp.accessLevel ?? '',
+      roles:       Array.isArray(emp.roles) ? emp.roles : [],
+      password:    '' // optional on edit
     });
     setError('');
   };
@@ -93,21 +112,42 @@ export default function EmployeeManagement() {
   };
 
   const handleEditChange = e => {
-    const { name, value } = e.target;
-    setEditForm(f => ({ ...f, [name]: value }));
+    const { name, value, checked } = e.target;
     setError('');
+
+    if (name === 'roles') {
+      setEditForm(f => {
+        const set = new Set(f.roles || []);
+        if (checked) set.add(value); else set.delete(value);
+        return { ...f, roles: Array.from(set) };
+      });
+      return;
+    }
+
+    setEditForm(f => ({ ...f, [name]: value }));
   };
 
   const submitEdit = async e => {
     e.preventDefault();
     setEditLoading(true);
     try {
-      const res = await api.put(`/employees/${editingId}`, {
+      const payload = {
         empCd:       editForm.empCd,
         empName:     editForm.empName,
-        depot:       editForm.depot,
-        accessLevel: editForm.accessLevel
-      });
+        depot:       editForm.depot || null,
+        accessLevel: editForm.accessLevel === '' ? '' : Number(editForm.accessLevel),
+        roles:       editForm.roles && editForm.roles.length ? editForm.roles : []
+      };
+      // Only send password if user typed a new one
+      if (editForm.password && editForm.password.trim().length >= 6) {
+        payload.password = editForm.password;
+      } else if (editForm.password && editForm.password.trim().length > 0) {
+        setError('New password must be at least 6 characters.');
+        setEditLoading(false);
+        return;
+      }
+
+      const res = await api.put(`/employees/${editingId}`, payload);
       setEmployees(es => es.map(e => e._id === editingId ? res.data : e));
       setEditingId(null);
     } catch (err) {
@@ -117,6 +157,7 @@ export default function EmployeeManagement() {
     }
   };
 
+  // ---------- RENDER ----------
   return (
     <div className="p-6 bg-gray-50 min-h-screen space-y-6">
       {/* Create / Edit Form */}
@@ -165,12 +206,50 @@ export default function EmployeeManagement() {
 
           <input
             name="accessLevel"
+            type="number"
             placeholder="Access Level"
             value={editingId ? editForm.accessLevel : form.accessLevel}
             onChange={editingId ? handleEditChange : handleChange}
             required
             className="border rounded px-3 py-2"
           />
+
+          {/* Roles (checkbox group) */}
+          <div className="md:col-span-2 lg:col-span-4">
+            <label className="block text-sm font-medium mb-2">Roles</label>
+            <div className="flex flex-wrap gap-3">
+              {ROLE_OPTIONS.map(role => {
+                const checked = editingId
+                  ? (editForm.roles || []).includes(role)
+                  : (form.roles || []).includes(role);
+                return (
+                  <label key={role} className="flex items-center gap-2 text-sm border px-3 py-2 rounded cursor-pointer">
+                    <input
+                      type="checkbox"
+                      name="roles"
+                      value={role}
+                      checked={checked}
+                      onChange={editingId ? handleEditChange : handleChange}
+                    />
+                    {role}
+                  </label>
+                );
+              })}
+            </div>
+          </div>
+
+          {/* Password */}
+          <div className="md:col-span-2 lg:col-span-2">
+            <input
+              type="password"
+              name="password"
+              placeholder={editingId ? 'New Password (optional, min 6 chars)' : 'Password (min 6 chars)'}
+              value={editingId ? editForm.password : form.password}
+              onChange={editingId ? handleEditChange : handleChange}
+              className="border rounded px-3 py-2 w-full"
+              required={!editingId} // required only on create
+            />
+          </div>
 
           <div className="md:col-span-2 lg:col-span-4 flex justify-end gap-2 mt-2">
             <button
@@ -179,8 +258,8 @@ export default function EmployeeManagement() {
               className="px-4 py-2 bg-green-600 text-white rounded hover:bg-green-700 transition"
             >
               {editingId
-                ? editLoading ? 'Saving…' : <><SaveIcon className="inline mr-1"/> Save</>
-                : loading     ? 'Adding…' : <><PlusIcon className="inline mr-1"/> Add</>
+                ? (editLoading ? 'Saving…' : <><SaveIcon className="inline mr-1"/> Save</>)
+                : (loading     ? 'Adding…' : <><PlusIcon className="inline mr-1"/> Add</>)
               }
             </button>
             {editingId && (
@@ -213,7 +292,7 @@ export default function EmployeeManagement() {
         <table className="min-w-full divide-y divide-gray-200">
           <thead className="sticky top-0 bg-gray-100">
             <tr>
-              {['#','Code','Name','Depot','Access','Created','Actions'].map((h,i) => (
+              {['#','Code','Name','Depot','Access','Roles','Created','Actions'].map((h,i) => (
                 <th key={i} className="px-2 py-2 text-left text-sm font-semibold">
                   {h}
                 </th>
@@ -227,7 +306,7 @@ export default function EmployeeManagement() {
                 className={`${i % 2 === 0 ? 'bg-white' : 'bg-gray-50'} hover:bg-gray-100`}
               >
                 {editingId === e._id ? (
-                  <td colSpan="7" className="px-2 py-4 text-center text-sm">
+                  <td colSpan="8" className="px-2 py-4 text-center text-sm">
                     Editing…
                   </td>
                 ) : (
@@ -237,6 +316,9 @@ export default function EmployeeManagement() {
                     <td className="px-2 py-2 text-sm">{e.empName}</td>
                     <td className="px-2 py-2 text-sm">{e.depotCd?.depotCd || '–'}</td>
                     <td className="px-2 py-2 text-sm">{e.accessLevel}</td>
+                    <td className="px-2 py-2 text-sm">
+                      {Array.isArray(e.roles) && e.roles.length ? e.roles.join(', ') : '–'}
+                    </td>
                     <td className="px-2 py-2 text-sm">{new Date(e.createdAt).toLocaleString()}</td>
                     <td className="px-2 py-2 flex gap-2">
                       <button onClick={() => startEdit(e)} title="Edit">
@@ -252,7 +334,7 @@ export default function EmployeeManagement() {
             ))}
             {!filtered.length && (
               <tr>
-                <td colSpan="7" className="px-2 py-4 text-center text-sm text-gray-500">
+                <td colSpan="8" className="px-2 py-4 text-center text-sm text-gray-500">
                   No employees found.
                 </td>
               </tr>

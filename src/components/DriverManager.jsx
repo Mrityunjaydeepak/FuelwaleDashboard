@@ -1,3 +1,4 @@
+// src/components/DriverManagement.jsx
 import React, { useState, useEffect } from 'react';
 import api from '../api';
 import {
@@ -11,37 +12,51 @@ import {
 
 export default function DriverManagement() {
   const initialForm = {
-    driverName:      '',
-    profile:         '',
-    depot:           '',
-    pesoLicenseNo:   '',
-    licenseNumber:   ''
+    driverName:    '',
+    profile:       '',
+    depot:         '',
+    pesoLicenseNo: '',
+    licenseNumber: ''
+    // NOTE: currentTrip/currentTripStatus are controlled by Trip assignment,
+    // not editable here.
   };
 
-  const [form, setForm]             = useState(initialForm);
-  const [employees, setEmployees]   = useState([]);
-  const [depots, setDepots]         = useState([]);
-  const [drivers, setDrivers]       = useState([]);
-  const [search, setSearch]         = useState('');
-  const [loading, setLoading]       = useState(false);
-  const [error, setError]           = useState('');
+  const [form, setForm]               = useState(initialForm);
+  const [employees, setEmployees]     = useState([]);
+  const [depots, setDepots]           = useState([]);
+  const [drivers, setDrivers]         = useState([]);
+  const [search, setSearch]           = useState('');
+  const [loading, setLoading]         = useState(false);
+  const [error, setError]             = useState('');
 
   const [editingId, setEditingId]     = useState(null);
   const [editForm, setEditForm]       = useState(initialForm);
   const [editLoading, setEditLoading] = useState(false);
 
-  // load lookups & drivers
+  // ── Load lookups & drivers ────────────────────────────────────────────────
   useEffect(() => {
-    api.get('/employees').then(r => setEmployees(r.data));
-    api.get('/depots').then(r => setDepots(r.data));
-    api.get('/drivers').then(r => setDrivers(r.data));
+    (async () => {
+      try {
+        const [emp, dep, drv] = await Promise.all([
+          api.get('/employees'),
+          api.get('/depots'),
+          api.get('/drivers')
+        ]);
+        setEmployees(emp.data || []);
+        setDepots(dep.data || []);
+        setDrivers(drv.data || []);
+      } catch (e) {
+        setError('Failed to load initial data');
+      }
+    })();
   }, []);
 
-  // filter by name
+  // ── Filter by name (null-safe) ────────────────────────────────────────────
   const filtered = drivers.filter(d =>
-    d.driverName.toLowerCase().includes(search.toLowerCase())
+    (d.driverName || '').toLowerCase().includes((search || '').toLowerCase())
   );
 
+  // ── Create ────────────────────────────────────────────────────────────────
   const handleChange = e => {
     const { name, value } = e.target;
     setForm(f => ({ ...f, [name]: value }));
@@ -51,10 +66,11 @@ export default function DriverManagement() {
   const handleSubmit = async e => {
     e.preventDefault();
     setLoading(true);
+    setError('');
     try {
       await api.post('/drivers', form);
       const res = await api.get('/drivers');
-      setDrivers(res.data);
+      setDrivers(res.data || []);
       setForm(initialForm);
     } catch (err) {
       setError(err.response?.data?.error || 'Failed to create driver');
@@ -63,7 +79,13 @@ export default function DriverManagement() {
     }
   };
 
+  // ── Delete (blocked if driver is currently on a trip) ─────────────────────
   const handleDelete = async id => {
+    const drv = drivers.find(d => d._id === id);
+    if (drv?.currentTrip) {
+      alert('Driver is currently allocated to a trip. End/clear the trip before deleting.');
+      return;
+    }
     if (!window.confirm('Delete this driver?')) return;
     try {
       await api.delete(`/drivers/${id}`);
@@ -73,14 +95,16 @@ export default function DriverManagement() {
     }
   };
 
+  // ── Edit ─────────────────────────────────────────────────────────────────
   const startEdit = d => {
     setEditingId(d._id);
     setEditForm({
-      driverName:      d.driverName,
-      profile:         d.profile?._id      || '',
-      depot:           d.depot?._id        || '',
-      pesoLicenseNo:   d.pesoLicenseNo     || '',
-      licenseNumber:   d.licenseNumber     || ''
+      driverName:    d.driverName || '',
+      profile:       d.profile?._id || '',
+      depot:         d.depot?._id   || '',
+      pesoLicenseNo: d.pesoLicenseNo || '',
+      licenseNumber: d.licenseNumber || ''
+      // currentTrip/currentTripStatus are not editable here
     });
     setError('');
   };
@@ -99,9 +123,10 @@ export default function DriverManagement() {
   const submitEdit = async e => {
     e.preventDefault();
     setEditLoading(true);
+    setError('');
     try {
       const res = await api.put(`/drivers/${editingId}`, editForm);
-      setDrivers(ds => ds.map(d => d._id === editingId ? res.data : d));
+      setDrivers(ds => ds.map(d => d._id === editingId ? (res.data || d) : d));
       setEditingId(null);
     } catch (err) {
       setError(err.response?.data?.error || 'Failed to update driver');
@@ -110,6 +135,18 @@ export default function DriverManagement() {
     }
   };
 
+  // ── UI helpers ────────────────────────────────────────────────────────────
+  const statusChip = (status) => {
+    const base = 'inline-block text-xs px-2 py-1 rounded border';
+    if (status === 'ACTIVE')   return <span className={`${base} bg-green-50 text-green-700 border-green-200`}>ACTIVE</span>;
+    if (status === 'ASSIGNED') return <span className={`${base} bg-yellow-50 text-yellow-700 border-yellow-200`}>ASSIGNED</span>;
+    if (status === 'COMPLETED')return <span className={`${base} bg-gray-50 text-gray-700 border-gray-200`}>COMPLETED</span>;
+    return <span className={`${base} bg-white text-gray-500 border-gray-200`}>—</span>;
+  };
+
+  const shortId = (id) => id ? String(id).slice(-6).toUpperCase() : '—';
+
+  // ── Render ────────────────────────────────────────────────────────────────
   return (
     <div className="p-6 bg-gray-50 min-h-screen space-y-6">
       {/* Create / Edit Form */}
@@ -184,8 +221,8 @@ export default function DriverManagement() {
               className="px-4 py-2 bg-green-600 text-white rounded hover:bg-green-700 transition"
             >
               {editingId
-                ? editLoading ? 'Saving…' : <><SaveIcon className="inline mr-1"/> Save</>
-                : loading     ? 'Adding…' : <><PlusIcon className="inline mr-1"/> Add</>
+                ? (editLoading ? 'Saving…' : <><SaveIcon className="inline mr-1"/> Save</>)
+                : (loading     ? 'Adding…' : <><PlusIcon className="inline mr-1"/> Add</>)
               }
             </button>
             {editingId && (
@@ -202,7 +239,7 @@ export default function DriverManagement() {
         </form>
       </div>
 
-      {/* Search & Table */}
+      {/* Search */}
       <div className="flex justify-between items-center">
         <h3 className="text-xl font-medium">Existing Drivers</h3>
         <input
@@ -214,11 +251,23 @@ export default function DriverManagement() {
         />
       </div>
 
+      {/* Table */}
       <div className="bg-white p-4 rounded-lg shadow overflow-auto max-h-[500px]">
         <table className="min-w-full divide-y divide-gray-200">
           <thead className="sticky top-0 bg-gray-100">
             <tr>
-              {['#','Name','Employee','Depot','PESO Lic','Driver Lic','Created','Actions'].map((h,i) => (
+              {[
+                '#',
+                'Name',
+                'Employee',
+                'Depot',
+                'PESO Lic',
+                'Driver Lic',
+                'On Trip',
+                'Trip Ref',
+                'Created',
+                'Actions'
+              ].map((h, i) => (
                 <th key={i} className="px-2 py-2 text-left text-sm font-semibold">
                   {h}
                 </th>
@@ -232,23 +281,36 @@ export default function DriverManagement() {
                 className={`${i % 2 === 0 ? 'bg-white' : 'bg-gray-50'} hover:bg-gray-100`}
               >
                 {editingId === d._id ? (
-                  <td colSpan="8" className="px-2 py-4 text-center text-sm">
+                  <td colSpan="10" className="px-2 py-4 text-center text-sm">
                     Editing…
                   </td>
                 ) : (
                   <>
                     <td className="px-2 py-2 text-sm">{i + 1}</td>
-                    <td className="px-2 py-2 text-sm">{d.driverName}</td>
+                    <td className="px-2 py-2 text-sm">{d.driverName || '—'}</td>
                     <td className="px-2 py-2 text-sm">{d.profile?.empCd || '–'}</td>
                     <td className="px-2 py-2 text-sm">{d.depot?.depotCd || '–'}</td>
                     <td className="px-2 py-2 text-sm">{d.pesoLicenseNo || '–'}</td>
                     <td className="px-2 py-2 text-sm">{d.licenseNumber || '–'}</td>
-                    <td className="px-2 py-2 text-sm">{new Date(d.createdAt).toLocaleString()}</td>
+                    <td className="px-2 py-2 text-sm">
+                      {statusChip(d.currentTripStatus)}
+                    </td>
+                    <td className="px-2 py-2 text-sm">
+                      {d.currentTrip ? shortId(d.currentTrip) : '—'}
+                    </td>
+                    <td className="px-2 py-2 text-sm">
+                      {d.createdAt ? new Date(d.createdAt).toLocaleString() : '—'}
+                    </td>
                     <td className="px-2 py-2 flex gap-2">
                       <button onClick={() => startEdit(d)} title="Edit">
                         <Edit2Icon size={16}/>
                       </button>
-                      <button onClick={() => handleDelete(d._id)} title="Delete">
+                      <button
+                        onClick={() => handleDelete(d._id)}
+                        title={d.currentTrip ? 'End/clear current trip to delete' : 'Delete'}
+                        className={d.currentTrip ? 'opacity-40 cursor-not-allowed' : ''}
+                        disabled={!!d.currentTrip}
+                      >
                         <Trash2Icon size={16}/>
                       </button>
                     </td>
@@ -258,7 +320,7 @@ export default function DriverManagement() {
             ))}
             {!filtered.length && (
               <tr>
-                <td colSpan="8" className="px-2 py-4 text-center text-sm text-gray-500">
+                <td colSpan="10" className="px-2 py-4 text-center text-sm text-gray-500">
                   No drivers found.
                 </td>
               </tr>

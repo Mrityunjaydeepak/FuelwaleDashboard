@@ -8,19 +8,17 @@ export default function TripManager() {
   // ── Master data ─────────────────────────────
   const [orders, setOrders]       = useState([]);
   const [customers, setCustomers] = useState([]);
-  const [drivers, setDrivers]     = useState([]);
-  const [vehicles, setVehicles]   = useState([]);
+  const [fleets, setFleets]       = useState([]);     // NEW: fleets (vehicle + driver)
   const [routes, setRoutes]       = useState([]);
   const [allTrips, setAllTrips]   = useState([]);
 
   // ── Selection state ──────────────────────────
-  const [assignOrderId,     setAssignOrderId]     = useState('');
-  const [selectedOrder,     setSelectedOrder]     = useState(null);
-  const [tripNo,            setTripNo]            = useState('');
-  const [assignRouteId,     setAssignRouteId]     = useState('');
-  const [assignVehicleNo,   setAssignVehicleNo]   = useState('');
-  const [assignDriverId,    setAssignDriverId]    = useState('');
-  const [sendCapacity,      setSendCapacity]      = useState('');
+  const [assignOrderId,  setAssignOrderId]  = useState('');
+  const [selectedOrder,  setSelectedOrder]  = useState(null);
+  const [tripNo,         setTripNo]         = useState('');
+  const [assignRouteId,  setAssignRouteId]  = useState('');
+  const [assignFleetId,  setAssignFleetId]  = useState(''); // NEW: select one Fleet
+  const [sendCapacity,   setSendCapacity]   = useState('');
 
   // ── Workflow flags ───────────────────────────
   const [assigned, setAssigned] = useState(false);
@@ -61,18 +59,16 @@ export default function TripManager() {
   useEffect(() => {
     (async () => {
       try {
-        const [o, c, d, v, r, t] = await Promise.all([
+        const [o, c, f, r, t] = await Promise.all([
           api.get('/orders'),
           api.get('/customers'),
-          api.get('/drivers'),
-          api.get('/vehicles'),
+          api.get('/fleets'),                 // NEW: fetch fleets (expect vehicle+driver populated if possible)
           api.get('/routes'),
           api.get('/trips').catch(() => ({ data: [] })) // non-fatal
         ]);
         setOrders(o.data || []);
         setCustomers(c.data || []);
-        setDrivers(d.data || []);
-        setVehicles(v.data || []);
+        setFleets((f.data || []).map(x => normalizeFleet(x)));
         setRoutes(r.data || []);
 
         const trips = (t.data || []).map(tr => ({
@@ -85,6 +81,26 @@ export default function TripManager() {
       }
     })();
   }, []);
+
+  // Normalize a fleet record (defensive if API isn’t populated)
+  const normalizeFleet = (fl) => {
+    const v = fl?.vehicle || {};
+    const d = fl?.driver  || {};
+    return {
+      ...fl,
+      vehicle: {
+        ...v,
+        vehicleNo: v.vehicleNo || fl?.vehicleNo || '—',
+        capacity:  v.capacity ?? null,
+        depotCd:   v.depotCd ?? fl?.depotCd ?? null,
+      },
+      driver: {
+        ...d,
+        driverName: d.driverName || d.name || fl?.driverName || '—',
+        pesoLicenseNo: d.pesoLicenseNo || fl?.pesoLicenseNo || '',
+      }
+    };
+  };
 
   // ── 2) When order changes: select & prefill capacity ───
   useEffect(() => {
@@ -155,19 +171,22 @@ export default function TripManager() {
   }, [assignOrderId, orders, customers]); // (not including allTrips to avoid loop)
 
   // ── Helpers ───────────────────────────────────
-  const vehiclesOnRoute = useMemo(
-    () => vehicles.filter(v => v.route?._id === assignRouteId),
-    [vehicles, assignRouteId]
-  );
   const orderItems = Array.isArray(selectedOrder?.items) ? selectedOrder.items : [];
 
-  // ── 4) Assign Trip ─────────────────────────────
+  // Basic label for a fleet option
+  const fleetLabel = (f) => {
+    const vno = f?.vehicle?.vehicleNo || '—';
+    const dnm = f?.driver?.driverName || '—';
+    return `${vno} — ${dnm}`;
+  };
+
+  // ── 4) Assign Trip (now with fleetId) ─────────────────────
   const handleAssign = async e => {
     e.preventDefault();
     setLoading(true);
     setError('');
-    if (!assignOrderId || !assignRouteId || !assignVehicleNo || !assignDriverId || !sendCapacity) {
-      setError('All fields are required');
+    if (!assignOrderId || !assignRouteId || !assignFleetId || !sendCapacity) {
+      setError('Trip No, Order, Route, Fleet and Capacity are required');
       setLoading(false);
       return;
     }
@@ -176,8 +195,7 @@ export default function TripManager() {
         tripNo,                         // server will save exactly this
         orderId:   assignOrderId,
         routeId:   assignRouteId,
-        vehicleNo: assignVehicleNo,
-        driverId:  assignDriverId,
+        fleetId:   assignFleetId,       // NEW
         capacity:  Number(sendCapacity),
       });
       const { tripId: newTripId, tripNo: newTripNo, seededDeliveriesCount } = res.data;
@@ -201,15 +219,15 @@ export default function TripManager() {
     }
   };
 
-  // ── 5) Start Trip ──────────────────────────────
+  // ── 5) Start Trip (no driverId/vehicleNo needed now) ──────
   const handleStart = async e => {
     e.preventDefault();
     setLoading(true);
     setError('');
 
     const toN = (x) => Number(x);
-    if (startKm === '' || totalizerStart === '') {
-      setError('Start KM and totalizer are required');
+    if (startKm === '' || totalizerStart === '' || !assignRouteId) {
+      setError('Start KM, totalizer and route are required');
       setLoading(false);
       return;
     }
@@ -222,15 +240,13 @@ export default function TripManager() {
     try {
       const res = await api.post('/trips/login', {
         tripId,
-        vehicleNo:       assignVehicleNo,
-        driverId:        assignDriverId,
         startKm:         Number(startKm),
         totalizerStart:  Number(totalizerStart),
         routeId:         assignRouteId,
         remarks
       });
       setDieselOpening(res.data.dieselOpening);
-      setDeliveries(res.data.deliveries);
+      setDeliveries(res.data.deliveries || []); // may be empty
       setStarted(true);
     } catch (err) {
       setError(err.response?.data?.error || 'Start trip failed');
@@ -272,8 +288,7 @@ export default function TripManager() {
       setStarted(false);
       setAssignOrderId('');
       setAssignRouteId('');
-      setAssignVehicleNo('');
-      setAssignDriverId('');
+      setAssignFleetId('');
       setSendCapacity('');
       setRemarks('');
       setStartKm('');
@@ -299,6 +314,12 @@ export default function TripManager() {
       (o.customer?.custName?.toLowerCase() || '').includes(s)
     );
   }, [orders, search]);
+
+  // Find selected fleet for display
+  const selectedFleet = useMemo(
+    () => fleets.find(f => String(f._id) === String(assignFleetId)),
+    [fleets, assignFleetId]
+  );
 
   return (
     <div className="max-w-xl mx-auto p-6 bg-white shadow rounded space-y-6">
@@ -377,22 +398,27 @@ export default function TripManager() {
             </select>
           </div>
 
-          {/* Vehicle */}
+          {/* Fleet (Vehicle + Driver) */}
           <div>
-            <label className="block font-semibold mb-1">Vehicle</label>
+            <label className="block font-semibold mb-1">Fleet (Vehicle + Driver)</label>
             <select
-              value={assignVehicleNo}
-              onChange={e => setAssignVehicleNo(e.target.value)}
+              value={assignFleetId}
+              onChange={e => setAssignFleetId(e.target.value)}
               required
               className="w-full border px-3 py-2 rounded"
             >
-              <option value="">— Select Vehicle —</option>
-              {vehiclesOnRoute.map(v => (
-                <option key={v.vehicleNo} value={v.vehicleNo}>
-                  {v.vehicleNo}
+              <option value="">— Select Fleet —</option>
+              {fleets.map(f => (
+                <option key={f._id} value={f._id}>
+                  {fleetLabel(f)}
                 </option>
               ))}
             </select>
+            {selectedFleet && (
+              <p className="text-xs text-gray-600 mt-1">
+                Depot: {selectedFleet.vehicle?.depotCd || '—'} • Capacity: {selectedFleet.vehicle?.capacity ?? '—'} L • GPS: {String(selectedFleet.gpsYesNo ?? selectedFleet.vehicle?.gpsYesNo ?? '—')}
+              </p>
+            )}
           </div>
 
           {/* Load to Send */}
@@ -408,24 +434,6 @@ export default function TripManager() {
             />
           </div>
 
-          {/* Driver */}
-          <div>
-            <label className="block font-semibold mb-1">Driver (PESO Lic #)</label>
-            <select
-              value={assignDriverId}
-              onChange={e => setAssignDriverId(e.target.value)}
-              required
-              className="w-full border px-3 py-2 rounded"
-            >
-              <option value="">— Select Driver —</option>
-              {drivers.map(d => (
-                <option key={d._id} value={d._id}>
-                  {d.pesoLicenseNo} — {d.driverName}
-                </option>
-              ))}
-            </select>
-          </div>
-
           <button
             type="submit"
             disabled={loading}
@@ -439,18 +447,22 @@ export default function TripManager() {
       {/* 2) START */}
       {assigned && !started && (
         <form onSubmit={handleStart} className="space-y-4">
-          <div className="p-3 bg-gray-50 rounded">
-            <p>
-              <strong>Driver:</strong>{' '}
-              {drivers.find(d => d._id === assignDriverId)?.pesoLicenseNo} —{' '}
-              {drivers.find(d => d._id === assignDriverId)?.driverName}
-            </p>
-            {createdDeliveriesCount > 0 && (
-              <p className="text-sm text-emerald-700 mt-1">
-                Seeded {createdDeliveriesCount} deliveries.
+          {selectedFleet && (
+            <div className="p-3 bg-gray-50 rounded">
+              <p>
+                <strong>Vehicle:</strong> {selectedFleet.vehicle?.vehicleNo || '—'}
               </p>
-            )}
-          </div>
+              <p>
+                <strong>Driver:</strong> {selectedFleet.driver?.driverName || '—'}
+                {selectedFleet.driver?.pesoLicenseNo ? ` — ${selectedFleet.driver.pesoLicenseNo}` : ''}
+              </p>
+              {createdDeliveriesCount > 0 && (
+                <p className="text-sm text-emerald-700 mt-1">
+                  Seeded {createdDeliveriesCount} deliveries.
+                </p>
+              )}
+            </div>
+          )}
 
           <div>
             <label className="block font-semibold mb-1">Remarks</label>
@@ -499,6 +511,11 @@ export default function TripManager() {
         <div className="space-y-4">
           <div className="p-4 bg-gray-50 rounded">
             <p><strong>Diesel Opening:</strong> {dieselOpening ?? '—'} L</p>
+            {selectedFleet && (
+              <p className="text-sm text-gray-600">
+                Vehicle {selectedFleet.vehicle?.vehicleNo || '—'} • Driver {selectedFleet.driver?.driverName || '—'}
+              </p>
+            )}
           </div>
 
           <div>

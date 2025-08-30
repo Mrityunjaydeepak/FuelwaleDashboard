@@ -23,6 +23,11 @@ import DriverManagement from './components/DriverManager';
 import EmployeeManagement from './components/EmployeeManager';
 import LoadingSourceMaster from './components/LoadingsourceManager';
 import TripListings from './components/Triplisting';
+import VehicleAllocation from './components/VehicleAllocation';
+import FleetList from './components/FleetList';
+import InvoiceListings from './components/InvoiceListing';
+import PaymentManager from './components/PaymentManager';
+
 
 export default function App() {
   return (
@@ -48,12 +53,16 @@ export default function App() {
               <Route path='driver-trips' element={<DriverTrips />} />
               <Route path='loading' element={<LoadingModule />} />
               <Route path='vehicle-master' element={<VehicleManagement />} />
+              <Route path='vehicle-allocation-master' element={<VehicleAllocation />} />
               <Route path='customer-master' element={<CustomerManagement />} />
               <Route path='user-master' element={<UserManagement />} />
               <Route path='driver-master' element={<DriverManagement />} />
               <Route path='employee-master' element={<EmployeeManagement />} />
               <Route path='loading-source-master' element={<LoadingSourceMaster />} />
               <Route path='trip-listing' element={<TripListings />} />
+              <Route path='fleet-listing' element={<FleetList />} />
+              <Route path='invoice-listing' element={<InvoiceListings />} />
+              <Route path='payment-manager' element={<PaymentManager />} />
             </Route>
           </Route>
         </Routes>

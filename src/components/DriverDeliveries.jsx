@@ -1,3 +1,4 @@
+// src/components/DeliveryModule.jsx
 import React, { useState, useEffect } from 'react';
 import { useLocation, useNavigate } from 'react-router-dom';
 import api from '../api';
@@ -26,25 +27,38 @@ export default function DeliveryModule() {
   const [totalizerEnd, setTotalizerEnd] = useState('');
   const [ending, setEnding]             = useState(false);
 
-  // ── Load on mount / tripId change ─────────────────
+  // ── helpers to read new trip shape ─────────────
+  const vehicleNo =
+    trip?.snapshot?.vehicleNo ||
+    trip?.vehicle?.vehicleNo || // in case you populate vehicle on GET /trip/:id
+    trip?.vehicleNo ||          // legacy fallback
+    '—';
+
+  const routeName  = trip?.routeName || '—';
+  const driverName = trip?.driverName || '—';
+
+  // ── Load on mount / tripId change ──────────────
   useEffect(() => {
     if (!tripId) return;
     refreshAll();
+    // eslint-disable-next-line
   }, [tripId]);
 
   const refreshAll = () => {
     setError('');
+
+    if (!tripId) return;
 
     api.get(`/trips/${tripId}`)
       .then(r => setTrip(r.data))
       .catch(() => setError('Failed to load trip'));
 
     api.get(`/deliveries/pending/${tripId}`)
-      .then(r => setPending(r.data))
+      .then(r => setPending(r.data || []))
       .catch(() => setError('Failed to load pending deliveries'));
 
     api.get(`/deliveries/completed/${tripId}`)
-      .then(r => setCompleted(r.data))
+      .then(r => setCompleted(r.data || []))
       .catch(() => setError('Failed to load completed deliveries'));
 
     api.get(`/bowserinventories/${tripId}`)
@@ -60,7 +74,7 @@ export default function DeliveryModule() {
     setTotalizerEnd('');
   };
 
-  // ──  Submit a delivery ───────────────────────
+  // ──  Submit a delivery ─────────────────────────
   const handleDeliver = async () => {
     const q  = Number(qty);
     const rt = Number(rate);
@@ -69,8 +83,12 @@ export default function DeliveryModule() {
       setError('You must select a customer/order first');
       return;
     }
-    if (isNaN(q) || isNaN(rt)) {
+    if (Number.isNaN(q) || Number.isNaN(rt)) {
       setError('Qty and rate must be numbers');
+      return;
+    }
+    if (q <= 0) {
+      setError('Qty must be greater than 0');
       return;
     }
     if (balance != null && q > balance) {
@@ -101,13 +119,13 @@ export default function DeliveryModule() {
     }
   };
 
-  // ── Show end‐trip form ───────────────────────
+  // ── Show end‐trip form ─────────────────────────
   const onRequestEnd = () => {
     setShowEndForm(true);
     setError('');
   };
 
-  // ── Submit end‐trip ───────────────────────────
+  // ── Submit end‐trip ────────────────────────────
   const handleEndTrip = async () => {
     if (!endKm || !totalizerEnd) {
       setError('End KM and totalizer end are required');
@@ -115,11 +133,11 @@ export default function DeliveryModule() {
     }
     const eKm  = Number(endKm);
     const tEnd = Number(totalizerEnd);
-    if (trip.startKm != null && eKm < trip.startKm) {
+    if (trip?.startKm != null && eKm < Number(trip.startKm)) {
       setError(`End KM (${eKm}) cannot be less than start KM (${trip.startKm})`);
       return;
     }
-    if (trip.totalizerStart != null && tEnd < trip.totalizerStart) {
+    if (trip?.totalizerStart != null && tEnd < Number(trip.totalizerStart)) {
       setError(`Totalizer end (${tEnd}) cannot be less than start (${trip.totalizerStart})`);
       return;
     }
@@ -149,16 +167,32 @@ export default function DeliveryModule() {
       document.body.appendChild(link);
       link.click();
       link.remove();
+      window.URL.revokeObjectURL(url);
     } catch (err) {
       setError(err.response?.data?.error || 'Invoice generation failed');
     }
   };
 
-  // ── Tab counts ───────────────────────────────
+  // ── Tab counts ─────────────────────────────────
   const pendingCount   = pending.length + (trip?.status === 'ACTIVE' ? 1 : 0);
   const completedCount = completed.length + (trip?.status === 'COMPLETED' ? 1 : 0);
 
-  // ── Render ───────────────────────────────────
+  // ── Render ─────────────────────────────────────
+  if (!tripId) {
+    return (
+      <div className="max-w-lg mx-auto p-6 bg-white shadow rounded mt-6">
+        <h2 className="text-2xl font-semibold mb-4">Delivery Module</h2>
+        <div className="text-red-600 mb-3">No trip selected.</div>
+        <button
+          onClick={() => navigate(-1)}
+          className="bg-gray-200 px-3 py-2 rounded"
+        >
+          Go Back
+        </button>
+      </div>
+    );
+  }
+
   return (
     <div className="max-w-lg mx-auto p-6 bg-white shadow rounded mt-6">
       <h2 className="text-2xl font-semibold mb-4">Delivery Module</h2>
@@ -192,9 +226,9 @@ export default function DeliveryModule() {
               <div className="flex justify-between">
                 <div>
                   <p><strong>Trip ID:</strong> {trip._id}</p>
-                  <p className="text-sm"><strong>Route:</strong> {trip.routeName}</p>
-                  <p className="text-sm"><strong>Vehicle:</strong> {trip.vehicleNo}</p>
-                  <p className="text-sm"><strong>Driver:</strong> {trip.driverName}</p>
+                  <p className="text-sm"><strong>Route:</strong> {routeName}</p>
+                  <p className="text-sm"><strong>Vehicle:</strong> {vehicleNo}</p>
+                  <p className="text-sm"><strong>Driver:</strong> {driverName}</p>
                 </div>
                 {!showEndForm && (
                   <button
@@ -315,9 +349,9 @@ export default function DeliveryModule() {
             <div className="mb-4 p-4 border rounded flex justify-between items-center">
               <div>
                 <p><strong>Trip ID:</strong> {trip._id}</p>
-                <p className="text-sm"><strong>Route:</strong> {trip.routeName}</p>
-                <p className="text-sm"><strong>Vehicle:</strong> {trip.vehicleNo}</p>
-                <p className="text-sm"><strong>Driver:</strong> {trip.driverName}</p>
+                <p className="text-sm"><strong>Route:</strong> {routeName}</p>
+                <p className="text-sm"><strong>Vehicle:</strong> {vehicleNo}</p>
+                <p className="text-sm"><strong>Driver:</strong> {driverName}</p>
               </div>
               <button
                 onClick={handleGenerateInvoice}
@@ -331,10 +365,10 @@ export default function DeliveryModule() {
             {completed.map(d => (
               <li key={d._id} className="p-3 border rounded">
                 <p>
-                  <strong>{d.customerName}</strong> — {d.qty} L @ {d.rate} — ₹{d.qty * d.rate}
+                  <strong>{d.customerName}</strong> — {d.qty} L @ {d.rate} — ₹{Number(d.qty) * Number(d.rate)}
                 </p>
                 <p className="text-sm text-gray-600">
-                  {new Date(d.deliveredAt).toLocaleString()}
+                  {d.deliveredAt ? new Date(d.deliveredAt).toLocaleString() : ''}
                 </p>
               </li>
             ))}
