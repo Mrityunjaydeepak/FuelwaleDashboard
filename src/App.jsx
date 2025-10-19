@@ -27,6 +27,7 @@ import VehicleAllocation from './components/VehicleAllocation';
 import FleetList from './components/FleetList';
 import InvoiceListings from './components/InvoiceListing';
 import PaymentManager from './components/PaymentManager';
+import PayRecManagement from './components/Payrec';
 
 
 export default function App() {
@@ -63,6 +64,7 @@ export default function App() {
               <Route path='fleet-listing' element={<FleetList />} />
               <Route path='invoice-listing' element={<InvoiceListings />} />
               <Route path='payment-manager' element={<PaymentManager />} />
+              <Route path='accounts' element={<PayRecManagement />} />
             </Route>
           </Route>
         </Routes>

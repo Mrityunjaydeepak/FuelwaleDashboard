@@ -11,14 +11,34 @@ import {
 
 export default function VehicleManagement() {
   const initialForm = {
+    // required
     vehicleNo: '',
     depotCd: '',
-    brand: '',
+
+    // specs
+    make: '',
     model: '',
+    capacityLtrs: '',
     calibratedCapacity: '',
-    dipStickYesNo: false,
+    grossWtKgs: '',
+
+    monthYear: '',
+    totaliserMake: '',
+    totaliserModel: '',
+
+    // sensors
     gpsYesNo: false,
+    volSensor: false,
+    dipStickYesNo: false,
     loadSensorYesNo: false,
+
+    // compliance / misc
+    pesoNo: '',
+    insuranceExpiryDt: '',
+    fitnessExpiryDt: '',
+    permitExpiryDt: '',
+
+    // relation
     route: ''
   };
 
@@ -33,6 +53,23 @@ export default function VehicleManagement() {
   const [editForm, setEditForm]       = useState(initialForm);
   const [editLoading, setEditLoading] = useState(false);
 
+  // utils
+  const numOrUndefined = (v) => {
+    if (v === '' || v === null || v === undefined) return undefined;
+    const n = Number(v);
+    return Number.isFinite(n) ? n : undefined;
+  };
+  const toDateInput = (d) => {
+    if (!d) return '';
+    const dt = new Date(d);
+    if (Number.isNaN(dt.getTime())) return '';
+    const yyyy = dt.getFullYear();
+    const mm = String(dt.getMonth() + 1).padStart(2, '0');
+    const dd = String(dt.getDate()).padStart(2, '0');
+    return `${yyyy}-${mm}-${dd}`;
+  };
+  const fmtDate = (d) => (d ? new Date(d).toLocaleDateString() : '–');
+
   // Load depots, routes & existing vehicles
   useEffect(() => {
     api.get('/depots').then(r => setDepots(r.data));
@@ -40,7 +77,7 @@ export default function VehicleManagement() {
     api.get('/vehicles').then(r => setVehicles(r.data));
   }, []);
 
-  // Generic change handler (text, number, checkbox, select)
+  // Generic change handler (text, number, checkbox, select, date)
   const handleChange = e => {
     const { name, type, value, checked } = e.target;
     setForm(f => ({
@@ -55,15 +92,36 @@ export default function VehicleManagement() {
     setLoading(true);
     try {
       await api.post('/vehicles', {
-        vehicleNo:          form.vehicleNo,
-        depotCd:            form.depotCd,
-        brand:              form.brand,
+        // primary identifiers
+        vehicleNo:     form.vehicleNo,
+        licensePlate:  form.vehicleNo, // 🔧 legacy unique index safety
+
+        // depot & relations
+        depotCd:       form.depotCd,
+        route:         form.route || undefined,
+
+        // specs
+        make:               form.make,
         model:              form.model,
-        calibratedCapacity: parseFloat(form.calibratedCapacity),
-        dipStickYesNo:      form.dipStickYesNo,
-        gpsYesNo:           form.gpsYesNo,
-        loadSensorYesNo:    form.loadSensorYesNo,
-        route:              form.route || undefined
+        capacityLtrs:       numOrUndefined(form.capacityLtrs),
+        calibratedCapacity: numOrUndefined(form.calibratedCapacity),
+        grossWtKgs:         numOrUndefined(form.grossWtKgs),
+
+        monthYear:      form.monthYear || undefined,
+        totaliserMake:  form.totaliserMake,
+        totaliserModel: form.totaliserModel,
+
+        // sensors
+        gpsYesNo:        form.gpsYesNo,
+        volSensor:       form.volSensor,
+        dipStickYesNo:   form.dipStickYesNo,
+        loadSensorYesNo: form.loadSensorYesNo,
+
+        // compliance / misc
+        pesoNo:            form.pesoNo,
+        insuranceExpiryDt: form.insuranceExpiryDt || undefined,
+        fitnessExpiryDt:   form.fitnessExpiryDt || undefined,
+        permitExpiryDt:    form.permitExpiryDt || undefined
       });
       const res = await api.get('/vehicles');
       setVehicles(res.data);
@@ -94,12 +152,28 @@ export default function VehicleManagement() {
     setEditForm({
       vehicleNo:          v.vehicleNo,
       depotCd:            v.depotCd,
-      brand:              v.brand || '',
+
+      make:               v.make || '',
       model:              v.model || '',
-      calibratedCapacity: v.calibratedCapacity?.toString() || '',
-      dipStickYesNo:      Boolean(v.dipStickYesNo),
+      capacityLtrs:       (v.capacityLtrs ?? '').toString(),
+      calibratedCapacity: (v.calibratedCapacity ?? '').toString(),
+      grossWtKgs:         (v.grossWtKgs ?? '').toString(),
+
+      monthYear:          v.monthYear || '',
+      totaliserMake:      v.totaliserMake || '',
+      totaliserModel:     v.totaliserModel || '',
+
       gpsYesNo:           Boolean(v.gpsYesNo),
+      volSensor:          Boolean(v.volSensor),
+      dipStickYesNo:      Boolean(v.dipStickYesNo),
       loadSensorYesNo:    Boolean(v.loadSensorYesNo),
+
+      pesoNo:             v.pesoNo || '',
+
+      insuranceExpiryDt:  toDateInput(v.insuranceExpiryDt),
+      fitnessExpiryDt:    toDateInput(v.fitnessExpiryDt),
+      permitExpiryDt:     toDateInput(v.permitExpiryDt),
+
       route:              v.route?._id || ''
     });
     setError('');
@@ -121,19 +195,38 @@ export default function VehicleManagement() {
     setEditLoading(true);
     try {
       const res = await api.put(`/vehicles/${editingId}`, {
-        vehicleNo:          editForm.vehicleNo,
-        depotCd:            editForm.depotCd,
-        brand:              editForm.brand,
+        // primary identifiers
+        vehicleNo:     editForm.vehicleNo,
+        licensePlate:  editForm.vehicleNo, // 🔧 legacy unique index safety
+
+        // depot & relations
+        depotCd:       editForm.depotCd,
+        route:         editForm.route || undefined,
+
+        // specs
+        make:               editForm.make,
         model:              editForm.model,
-        calibratedCapacity: parseFloat(editForm.calibratedCapacity),
-        dipStickYesNo:      editForm.dipStickYesNo,
-        gpsYesNo:           editForm.gpsYesNo,
-        loadSensorYesNo:    editForm.loadSensorYesNo,
-        route:              editForm.route || undefined
+        capacityLtrs:       numOrUndefined(editForm.capacityLtrs),
+        calibratedCapacity: numOrUndefined(editForm.calibratedCapacity),
+        grossWtKgs:         numOrUndefined(editForm.grossWtKgs),
+
+        monthYear:      editForm.monthYear || undefined,
+        totaliserMake:  editForm.totaliserMake,
+        totaliserModel: editForm.totaliserModel,
+
+        // sensors
+        gpsYesNo:        editForm.gpsYesNo,
+        volSensor:       editForm.volSensor,
+        dipStickYesNo:   editForm.dipStickYesNo,
+        loadSensorYesNo: editForm.loadSensorYesNo,
+
+        // compliance / misc
+        pesoNo:            editForm.pesoNo,
+        insuranceExpiryDt: editForm.insuranceExpiryDt || undefined,
+        fitnessExpiryDt:   editForm.fitnessExpiryDt || undefined,
+        permitExpiryDt:    editForm.permitExpiryDt || undefined
       });
-      setVehicles(vs =>
-        vs.map(v => (v._id === editingId ? res.data : v))
-      );
+      setVehicles(vs => vs.map(v => (v._id === editingId ? res.data : v)));
       setEditingId(null);
     } catch (err) {
       console.error('Edit error', err.response || err);
@@ -163,7 +256,7 @@ export default function VehicleManagement() {
                 onChange={handleChange}
                 required
                 maxLength={10}
-                placeholder="MH01ABC9999"
+                placeholder="MH01AB9999"
                 className="w-full border rounded px-3 py-2 focus:ring-2 focus:ring-green-500 transition"
               />
             </div>
@@ -185,12 +278,13 @@ export default function VehicleManagement() {
                 ))}
               </select>
             </div>
-            {/* Brand */}
+
+            {/* Make */}
             <div>
-              <label className="block mb-1 font-semibold">Brand</label>
+              <label className="block mb-1 font-semibold">Make</label>
               <input
-                name="brand"
-                value={form.brand}
+                name="make"
+                value={form.make}
                 onChange={handleChange}
                 placeholder="Volvo"
                 className="w-full border rounded px-3 py-2 focus:ring-2 focus:ring-green-500 transition"
@@ -207,7 +301,20 @@ export default function VehicleManagement() {
                 className="w-full border rounded px-3 py-2 focus:ring-2 focus:ring-green-500 transition"
               />
             </div>
-            {/* Capacity */}
+
+            {/* Capacity (L) */}
+            <div>
+              <label className="block mb-1 font-semibold">Capacity (L)</label>
+              <input
+                name="capacityLtrs"
+                type="number"
+                value={form.capacityLtrs}
+                onChange={handleChange}
+                placeholder="5000"
+                className="w-full border rounded px-3 py-2 focus:ring-2 focus:ring-green-500 transition"
+              />
+            </div>
+            {/* Calibrated Capacity (L) */}
             <div>
               <label className="block mb-1 font-semibold">Calibrated Capacity (L)</label>
               <input
@@ -219,6 +326,68 @@ export default function VehicleManagement() {
                 className="w-full border rounded px-3 py-2 focus:ring-2 focus:ring-green-500 transition"
               />
             </div>
+
+            {/* Gross Weight (kg) */}
+            <div>
+              <label className="block mb-1 font-semibold">Gross Weight (kg)</label>
+              <input
+                name="grossWtKgs"
+                type="number"
+                value={form.grossWtKgs}
+                onChange={handleChange}
+                placeholder="16000"
+                className="w-full border rounded px-3 py-2 focus:ring-2 focus:ring-green-500 transition"
+              />
+            </div>
+
+            {/* Month/Year */}
+            <div>
+              <label className="block mb-1 font-semibold">Month/Year</label>
+              <input
+                name="monthYear"
+                value={form.monthYear}
+                onChange={handleChange}
+                placeholder="MM/YYYY or YYYY-MM"
+                pattern="^(\d{2}\/\d{4}|\d{4}-\d{2})$"
+                className="w-full border rounded px-3 py-2 focus:ring-2 focus:ring-green-500 transition"
+              />
+            </div>
+
+            {/* Totaliser Make */}
+            <div>
+              <label className="block mb-1 font-semibold">Totaliser Make</label>
+              <input
+                name="totaliserMake"
+                value={form.totaliserMake}
+                onChange={handleChange}
+                placeholder="L&T"
+                className="w-full border rounded px-3 py-2 focus:ring-2 focus:ring-green-500 transition"
+              />
+            </div>
+            {/* Totaliser Model */}
+            <div>
+              <label className="block mb-1 font-semibold">Totaliser Model</label>
+              <input
+                name="totaliserModel"
+                value={form.totaliserModel}
+                onChange={handleChange}
+                placeholder="T1000"
+                className="w-full border rounded px-3 py-2 focus:ring-2 focus:ring-green-500 transition"
+              />
+            </div>
+
+            {/* PESO No */}
+            <div>
+              <label className="block mb-1 font-semibold">PESO No</label>
+              <input
+                name="pesoNo"
+                value={form.pesoNo}
+                onChange={handleChange}
+                placeholder="PESO/XXXX/2025"
+                className="w-full border rounded px-3 py-2 focus:ring-2 focus:ring-green-500 transition"
+              />
+            </div>
+
             {/* Route */}
             <div>
               <label className="block mb-1 font-semibold">Route</label>
@@ -236,7 +405,7 @@ export default function VehicleManagement() {
             </div>
           </div>
 
-          {/* Sensors & Dipstick */}
+          {/* Sensors */}
           <div className="flex flex-wrap gap-6">
             <label className="inline-flex items-center">
               <input
@@ -265,6 +434,49 @@ export default function VehicleManagement() {
                 className="mr-2"
               /> Load Sensor
             </label>
+            <label className="inline-flex items-center">
+              <input
+                name="volSensor"
+                type="checkbox"
+                checked={form.volSensor}
+                onChange={handleChange}
+                className="mr-2"
+              /> Volume Sensor
+            </label>
+          </div>
+
+          {/* Compliance Dates */}
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+            <div>
+              <label className="block mb-1 font-semibold">Insurance Expiry</label>
+              <input
+                type="date"
+                name="insuranceExpiryDt"
+                value={form.insuranceExpiryDt}
+                onChange={handleChange}
+                className="w-full border rounded px-3 py-2 focus:ring-2 focus:ring-green-500 transition"
+              />
+            </div>
+            <div>
+              <label className="block mb-1 font-semibold">Fitness Expiry</label>
+              <input
+                type="date"
+                name="fitnessExpiryDt"
+                value={form.fitnessExpiryDt}
+                onChange={handleChange}
+                className="w-full border rounded px-3 py-2 focus:ring-2 focus:ring-green-500 transition"
+              />
+            </div>
+            <div>
+              <label className="block mb-1 font-semibold">Permit Expiry</label>
+              <input
+                type="date"
+                name="permitExpiryDt"
+                value={form.permitExpiryDt}
+                onChange={handleChange}
+                className="w-full border rounded px-3 py-2 focus:ring-2 focus:ring-green-500 transition"
+              />
+            </div>
           </div>
 
           <button
@@ -286,12 +498,21 @@ export default function VehicleManagement() {
               <th className="px-4 py-2 text-left text-sm font-semibold">#</th>
               <th className="px-4 py-2 text-left text-sm font-semibold">Vehicle No</th>
               <th className="px-4 py-2 text-left text-sm font-semibold">Depot</th>
-              <th className="px-4 py-2 text-left text-sm font-semibold">Brand</th>
+              <th className="px-4 py-2 text-left text-sm font-semibold">Make</th>
               <th className="px-4 py-2 text-left text-sm font-semibold">Model</th>
-              <th className="px-4 py-2 text-left text-sm font-semibold">Capacity</th>
+              <th className="px-4 py-2 text-left text-sm font-semibold">Capacity (L)</th>
+              <th className="px-4 py-2 text-left text-sm font-semibold">Calib. Cap. (L)</th>
+              <th className="px-4 py-2 text-left text-sm font-semibold">Gross Wt (kg)</th>
+              <th className="px-4 py-2 text-left text-sm font-semibold">Month/Year</th>
+              <th className="px-4 py-2 text-left text-sm font-semibold">Totaliser</th>
               <th className="px-4 py-2 text-center text-sm font-semibold">Dipstick</th>
               <th className="px-4 py-2 text-center text-sm font-semibold">GPS</th>
-              <th className="px-4 py-2 text-center text-sm font-semibold">Load Sensor</th>
+              <th className="px-4 py-2 text-center text-sm font-semibold">Load</th>
+              <th className="px-4 py-2 text-center text-sm font-semibold">Vol</th>
+              <th className="px-4 py-2 text-left text-sm font-semibold">PESO No</th>
+              <th className="px-4 py-2 text-left text-sm font-semibold">Insurance</th>
+              <th className="px-4 py-2 text-left text-sm font-semibold">Fitness</th>
+              <th className="px-4 py-2 text-left text-sm font-semibold">Permit</th>
               <th className="px-4 py-2 text-left text-sm font-semibold">Route</th>
               <th className="px-4 py-2 text-left text-sm font-semibold">Created</th>
               <th className="px-4 py-2 text-center text-sm font-semibold">Actions</th>
@@ -328,8 +549,8 @@ export default function VehicleManagement() {
                     </td>
                     <td className="px-4 py-2">
                       <input
-                        name="brand"
-                        value={editForm.brand}
+                        name="make"
+                        value={editForm.make}
                         onChange={handleEditChange}
                         className="w-full border rounded px-2 py-1"
                       />
@@ -344,12 +565,58 @@ export default function VehicleManagement() {
                     </td>
                     <td className="px-4 py-2">
                       <input
+                        name="capacityLtrs"
+                        type="number"
+                        value={editForm.capacityLtrs}
+                        onChange={handleEditChange}
+                        className="w-full border rounded px-2 py-1"
+                      />
+                    </td>
+                    <td className="px-4 py-2">
+                      <input
                         name="calibratedCapacity"
                         type="number"
                         value={editForm.calibratedCapacity}
                         onChange={handleEditChange}
                         className="w-full border rounded px-2 py-1"
                       />
+                    </td>
+                    <td className="px-4 py-2">
+                      <input
+                        name="grossWtKgs"
+                        type="number"
+                        value={editForm.grossWtKgs}
+                        onChange={handleEditChange}
+                        className="w-full border rounded px-2 py-1"
+                      />
+                    </td>
+                    <td className="px-4 py-2">
+                      <input
+                        name="monthYear"
+                        value={editForm.monthYear}
+                        onChange={handleEditChange}
+                        placeholder="MM/YYYY or YYYY-MM"
+                        pattern="^(\d{2}\/\d{4}|\d{4}-\d{2})$"
+                        className="w-full border rounded px-2 py-1"
+                      />
+                    </td>
+                    <td className="px-4 py-2">
+                      <div className="grid grid-cols-1 gap-1">
+                        <input
+                          name="totaliserMake"
+                          value={editForm.totaliserMake}
+                          onChange={handleEditChange}
+                          placeholder="Make"
+                          className="w-full border rounded px-2 py-1"
+                        />
+                        <input
+                          name="totaliserModel"
+                          value={editForm.totaliserModel}
+                          onChange={handleEditChange}
+                          placeholder="Model"
+                          className="w-full border rounded px-2 py-1"
+                        />
+                      </div>
                     </td>
                     <td className="px-4 py-2 text-center">
                       <input
@@ -373,6 +640,49 @@ export default function VehicleManagement() {
                         type="checkbox"
                         checked={editForm.loadSensorYesNo}
                         onChange={handleEditChange}
+                      />
+                    </td>
+                    <td className="px-4 py-2 text-center">
+                      <input
+                        name="volSensor"
+                        type="checkbox"
+                        checked={editForm.volSensor}
+                        onChange={handleEditChange}
+                      />
+                    </td>
+                    <td className="px-4 py-2">
+                      <input
+                        name="pesoNo"
+                        value={editForm.pesoNo}
+                        onChange={handleEditChange}
+                        className="w-full border rounded px-2 py-1"
+                      />
+                    </td>
+                    <td className="px-4 py-2">
+                      <input
+                        type="date"
+                        name="insuranceExpiryDt"
+                        value={editForm.insuranceExpiryDt}
+                        onChange={handleEditChange}
+                        className="w-full border rounded px-2 py-1"
+                      />
+                    </td>
+                    <td className="px-4 py-2">
+                      <input
+                        type="date"
+                        name="fitnessExpiryDt"
+                        value={editForm.fitnessExpiryDt}
+                        onChange={handleEditChange}
+                        className="w-full border rounded px-2 py-1"
+                      />
+                    </td>
+                    <td className="px-4 py-2">
+                      <input
+                        type="date"
+                        name="permitExpiryDt"
+                        value={editForm.permitExpiryDt}
+                        onChange={handleEditChange}
+                        className="w-full border rounded px-2 py-1"
                       />
                     </td>
                     <td className="px-4 py-2">
@@ -415,9 +725,17 @@ export default function VehicleManagement() {
                     <td className="px-4 py-2 text-sm">{idx + 1}</td>
                     <td className="px-4 py-2 text-sm">{v.vehicleNo}</td>
                     <td className="px-4 py-2 text-sm">{v.depotCd}</td>
-                    <td className="px-4 py-2 text-sm">{v.brand || '–'}</td>
+                    <td className="px-4 py-2 text-sm">{v.make || '–'}</td>
                     <td className="px-4 py-2 text-sm">{v.model || '–'}</td>
-                    <td className="px-4 py-2 text-sm">{v.calibratedCapacity}</td>
+                    <td className="px-4 py-2 text-sm">{v.capacityLtrs ?? '–'}</td>
+                    <td className="px-4 py-2 text-sm">{v.calibratedCapacity ?? '–'}</td>
+                    <td className="px-4 py-2 text-sm">{v.grossWtKgs ?? '–'}</td>
+                    <td className="px-4 py-2 text-sm">{v.monthYear || '–'}</td>
+                    <td className="px-4 py-2 text-sm">
+                      {(v.totaliserMake || v.totaliserModel)
+                        ? `${v.totaliserMake || ''}${v.totaliserMake && v.totaliserModel ? ' / ' : ''}${v.totaliserModel || ''}`
+                        : '–'}
+                    </td>
                     <td className="px-4 py-2 text-center text-sm">
                       {v.dipStickYesNo ? 'Yes' : 'No'}
                     </td>
@@ -427,12 +745,15 @@ export default function VehicleManagement() {
                     <td className="px-4 py-2 text-center text-sm">
                       {v.loadSensorYesNo ? 'Yes' : 'No'}
                     </td>
-                    <td className="px-4 py-2 text-sm">
-                      {v.route?.name || '–'}
+                    <td className="px-4 py-2 text-center text-sm">
+                      {v.volSensor ? 'Yes' : 'No'}
                     </td>
-                    <td className="px-4 py-2 text-sm">
-                      {new Date(v.createdAt).toLocaleString()}
-                    </td>
+                    <td className="px-4 py-2 text-sm">{v.pesoNo || '–'}</td>
+                    <td className="px-4 py-2 text-sm">{fmtDate(v.insuranceExpiryDt)}</td>
+                    <td className="px-4 py-2 text-sm">{fmtDate(v.fitnessExpiryDt)}</td>
+                    <td className="px-4 py-2 text-sm">{fmtDate(v.permitExpiryDt)}</td>
+                    <td className="px-4 py-2 text-sm">{v.route?.name || '–'}</td>
+                    <td className="px-4 py-2 text-sm">{new Date(v.createdAt).toLocaleString()}</td>
                     <td className="px-4 py-2 flex justify-center gap-2">
                       <button
                         onClick={() => startEdit(v)}
@@ -455,7 +776,7 @@ export default function VehicleManagement() {
             ))}
             {!vehicles.length && (
               <tr>
-                <td colSpan="12" className="px-4 py-2 text-center text-sm text-gray-500">
+                <td colSpan="22" className="px-4 py-2 text-center text-sm text-gray-500">
                   No vehicles found.
                 </td>
               </tr>
