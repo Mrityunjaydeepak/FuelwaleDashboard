@@ -47,7 +47,7 @@ const NAV_GROUPS = [
       { to: '/driver-deliveries',label: 'Driver Deliveries',      icon: ClipboardList,  roles: ['d'] },
       { to: '/invoice-listing',label: 'Invoice Listings',      icon: ClipboardList,  roles: ['a'] },
       { to: '/payment-manager',label: 'Payment Manager',      icon: ClipboardList,  roles: ['a'] },
-      { to: '/accounts',label: 'Payment Manager',      icon: ClipboardList,  roles: ['a'] },
+      { to: '/accounts',label: 'Accounts',      icon: ClipboardList,  roles: ['a'] },
     ]
   },
   {
