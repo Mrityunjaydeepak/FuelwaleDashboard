@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useMemo } from 'react';
 import api from '../api';
 import {
   UserIcon,
@@ -6,7 +6,8 @@ import {
   Edit2Icon,
   Trash2Icon,
   SaveIcon,
-  XIcon
+  XIcon,
+  RotateCcwIcon
 } from 'lucide-react';
 
 // User type labels incl. new VA/TR/AC
@@ -49,27 +50,51 @@ export default function UserManagement() {
 
   const [adminBlocked, setAdminBlocked] = useState(false);
 
-  // Load lookups & existing users
+  // View mode for soft-deletes
+  // 'active' => default (backend auto-excludes deleted)
+  // 'all'    => include deleted (?withDeleted=1)
+  // 'deleted'=> only deleted (?onlyDeleted=1)
+  const [viewMode, setViewMode] = useState('active');
+  const viewQueryParams = useMemo(() => {
+    if (viewMode === 'all') return { withDeleted: 1 };
+    if (viewMode === 'deleted') return { onlyDeleted: 1 };
+    return {}; // active
+  }, [viewMode]);
+
+  const loadLookups = async () => {
+    const [d1, d2, d3, d4] = await Promise.all([
+      api.get('/depots'),
+      api.get('/employees'),
+      api.get('/drivers'),
+      api.get('/customers')
+    ]);
+    setDepots(d1.data || []);
+    setEmployees(d2.data || []);
+    setDrivers(d3.data || []);
+    setCustomers(d4.data || []);
+  };
+
+  const loadUsers = async () => {
+    const res = await api.get('/users', { params: viewQueryParams });
+    setUsers(res.data || []);
+  };
+
+  // Load lookups on mount
   useEffect(() => {
     (async () => {
       try {
-        const [d1, d2, d3, d4] = await Promise.all([
-          api.get('/depots'),
-          api.get('/employees'),
-          api.get('/drivers'),
-          api.get('/customers')
-        ]);
-        setDepots(d1.data || []);
-        setEmployees(d2.data || []);
-        setDrivers(d3.data || []);
-        setCustomers(d4.data || []);
+        await loadLookups();
       } catch (e) {
         setError('Failed to load lookups');
       }
+    })();
+  }, []);
 
+  // Load users whenever view mode changes
+  useEffect(() => {
+    (async () => {
       try {
-        const d5 = await api.get('/users'); // Admin-only on backend
-        setUsers(d5.data || []);
+        await loadUsers();
         setAdminBlocked(false);
       } catch (e) {
         if (e?.response?.status === 403) {
@@ -79,7 +104,7 @@ export default function UserManagement() {
         }
       }
     })();
-  }, []);
+  }, [viewMode]); // eslint-disable-line 
 
   // Filter users by ID or mobile (safe against missing fields)
   const filtered = users.filter(u =>
@@ -106,8 +131,7 @@ export default function UserManagement() {
     setLoading(true);
     try {
       await api.post('/users', form);
-      const res = await api.get('/users');
-      setUsers(res.data);
+      await loadUsers();
       setForm(initialForm);
     } catch (err) {
       setError(err.response?.data?.error || 'Failed to create user');
@@ -116,19 +140,34 @@ export default function UserManagement() {
     }
   };
 
-  // Delete user
+  // Soft delete user
   const handleDelete = async id => {
-    if (!window.confirm('Delete this user?')) return;
+    if (!window.confirm('Soft delete this user? They can be restored later.')) return;
+    const reason = window.prompt('Optional: reason for deletion (leave blank to skip)') || undefined;
     try {
-      await api.delete(`/users/${id}`);
-      setUsers(us => us.filter(u => u._id !== id));
+      await api.delete(`/users/${id}`, { data: { reason } });
+      await loadUsers();
     } catch (err) {
       setError(err.response?.data?.error || 'Failed to delete user');
     }
   };
 
-  // Start inline editing
+  // Restore user
+  const handleRestore = async id => {
+    try {
+      await api.post(`/users/${id}/restore`);
+      await loadUsers();
+    } catch (err) {
+      setError(err.response?.data?.error || 'Failed to restore user');
+    }
+  };
+
+  // Start inline editing (disabled for deleted users)
   const startEdit = u => {
+    if (u.deleted) {
+      setError('Cannot edit a deleted user. Restore the user first.');
+      return;
+    }
     setEditingId(u._id);
     setEditForm({
       userId:     u.userId,
@@ -163,7 +202,10 @@ export default function UserManagement() {
     try {
       const body = { ...editForm };
       if (!body.pwd) delete body.pwd;  // don't send empty pwd
-      const res = await api.put(`/users/${editingId}`, body);
+      const res = await api.put(`/users/${editingId}`, body, {
+        params: viewQueryParams.withDeleted ? { withDeleted: 1 } : undefined
+      });
+      // Replace row with updated data
       setUsers(us => us.map(u => (u._id === editingId ? res.data : u)));
       setEditingId(null);
     } catch (err) {
@@ -178,12 +220,32 @@ export default function UserManagement() {
     setError('');
   };
 
+  const StatusBadge = ({ u }) => {
+    if (u.deleted) {
+      return (
+        <span className="inline-flex items-center gap-1 px-2 py-0.5 text-xs rounded-full bg-red-100 text-red-700">
+          Deleted
+          {u.deletedAt && (
+            <span className="opacity-70">
+              ({new Date(u.deletedAt).toLocaleDateString()})
+            </span>
+          )}
+        </span>
+      );
+    }
+    return (
+      <span className="inline-block px-2 py-0.5 text-xs rounded-full bg-green-100 text-green-700">
+        Active
+      </span>
+    );
+  };
+
   return (
     <div className="p-6 bg-gray-50 min-h-screen space-y-6">
       {/* — Create / Add User Form — */}
       <div className="bg-white p-6 rounded-lg shadow">
         <h2 className="text-2xl font-semibold mb-4 flex items-center gap-2">
-          <UserIcon size={24}/> User Management
+          <UserIcon size={24}/> Credential Management
         </h2>
 
         {adminBlocked && (
@@ -323,9 +385,21 @@ export default function UserManagement() {
         </form>
       </div>
 
-      {/* — Search & User List — */}
-      <div className="flex justify-between items-center">
-        <h3 className="text-xl font-medium">Users</h3>
+      {/* — Toolbar: View mode + Search — */}
+      <div className="flex flex-col md:flex-row gap-3 md:items-center md:justify-between">
+        <div className="flex items-center gap-2">
+          <label className="text-sm text-gray-600">View:</label>
+          <select
+            value={viewMode}
+            onChange={(e) => setViewMode(e.target.value)}
+            className="border rounded px-3 py-2"
+            disabled={adminBlocked}
+          >
+            <option value="active">Active</option>
+            <option value="all">All (include deleted)</option>
+            <option value="deleted">Deleted only</option>
+          </select>
+        </div>
         <input
           type="text"
           placeholder="Search by ID or mobile…"
@@ -336,7 +410,8 @@ export default function UserManagement() {
         />
       </div>
 
-      <div className="bg-white p-4 rounded-lg shadow overflow-auto max-h-[500px]">
+      {/* — User List — */}
+      <div className="bg-white p-4 rounded-lg shadow overflow-auto max-h-[560px]">
         {adminBlocked ? (
           <div className="text-center text-gray-500 py-8">
             Admin-only area.
@@ -345,7 +420,7 @@ export default function UserManagement() {
           <table className="min-w-full divide-y divide-gray-200">
             <thead className="sticky top-0 bg-gray-100 z-10">
               <tr>
-                {['#','User ID','Type','Mobile','Depot','Mapping','Created','Actions'].map((h,i) => (
+                {['#','Status','User ID','Type','Mobile','Depot','Mapping','Created','Actions'].map((h,i) => (
                   <th
                     key={i}
                     className="px-2 py-2 text-left text-sm font-semibold"
@@ -359,10 +434,10 @@ export default function UserManagement() {
               {filtered.map((u, i) => (
                 <tr
                   key={u._id}
-                  className={`${i % 2 === 0 ? 'bg-white' : 'bg-gray-50'} hover:bg-gray-100`}
+                  className={`${i % 2 === 0 ? 'bg-white' : 'bg-gray-50'} hover:bg-gray-100 ${u.deleted ? 'opacity-75' : ''}`}
                 >
                   {editingId === u._id ? (
-                    <td colSpan={8} className="px-3 py-3">
+                    <td colSpan={9} className="px-3 py-3">
                       <form onSubmit={submitEdit} className="grid grid-cols-1 md:grid-cols-3 lg:grid-cols-4 gap-3">
                         <input
                           name="userId"
@@ -486,7 +561,10 @@ export default function UserManagement() {
                   ) : (
                     <>
                       <td className="px-2 py-2 text-sm">{i + 1}</td>
-                      <td className="px-2 py-2 text-sm">{u.userId}</td>
+                      <td className="px-2 py-2 text-sm"><StatusBadge u={u} /></td>
+                      <td className="px-2 py-2 text-sm">
+                        {u.deleted ? <span className="line-through">{u.userId}</span> : u.userId}
+                      </td>
                       <td className="px-2 py-2 text-sm">{typeLabel[u.userType] || u.userType}</td>
                       <td className="px-2 py-2 text-sm">{u.mobileNo}</td>
                       <td className="px-2 py-2 text-sm">{u.depotCd}</td>
@@ -499,13 +577,21 @@ export default function UserManagement() {
                       <td className="px-2 py-2 text-sm">
                         {u.createdAt ? new Date(u.createdAt).toLocaleString() : '—'}
                       </td>
-                      <td className="px-2 py-2 flex gap-2">
-                        <button onClick={() => startEdit(u)} title="Edit" className="p-1 hover:text-blue-600">
-                          <Edit2Icon size={16}/>
-                        </button>
-                        <button onClick={() => handleDelete(u._id)} title="Delete" className="p-1 hover:text-red-600">
-                          <Trash2Icon size={16}/>
-                        </button>
+                      <td className="px-2 py-2 flex gap-2 items-center">
+                        {!u.deleted && (
+                          <button onClick={() => startEdit(u)} title="Edit" className="p-1 hover:text-blue-600">
+                            <Edit2Icon size={16}/>
+                          </button>
+                        )}
+                        {!u.deleted ? (
+                          <button onClick={() => handleDelete(u._id)} title="Soft delete" className="p-1 hover:text-red-600">
+                            <Trash2Icon size={16}/>
+                          </button>
+                        ) : (
+                          <button onClick={() => handleRestore(u._id)} title="Restore user" className="p-1 hover:text-green-700">
+                            <RotateCcwIcon size={16}/>
+                          </button>
+                        )}
                       </td>
                     </>
                   )}
@@ -513,7 +599,7 @@ export default function UserManagement() {
               ))}
               {!filtered.length && (
                 <tr>
-                  <td colSpan={8} className="px-2 py-4 text-center text-sm text-gray-500">
+                  <td colSpan={9} className="px-2 py-4 text-center text-sm text-gray-500">
                     No users found.
                   </td>
                 </tr>

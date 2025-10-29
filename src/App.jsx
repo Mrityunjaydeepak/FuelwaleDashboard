@@ -62,7 +62,7 @@ export default function App() {
               <Route path='loading-source-master' element={<LoadingSourceMaster />} />
               <Route path='trip-listing' element={<TripListings />} />
               <Route path='fleet-listing' element={<FleetList />} />
-              <Route path='invoice-listing' element={<InvoiceListings />} />
+              <Route path='voucher-listing' element={<InvoiceListings />} />
               <Route path='payment-manager' element={<PaymentManager />} />
               <Route path='accounts' element={<PayRecManagement />} />
             </Route>

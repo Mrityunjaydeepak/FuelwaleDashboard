@@ -1,6 +1,5 @@
-// src/components/Dashboard.jsx
-import React, { useMemo, useState } from 'react';
-import { Link } from 'react-router-dom';
+import React, { useMemo } from 'react';
+import { Link, useSearchParams } from 'react-router-dom';
 import {
   Building2,
   Route as RouteIcon,
@@ -20,12 +19,11 @@ import {
 } from 'lucide-react';
 
 /**
- * Single-page UX:
- * - Shows TWO big buttons: "Masters" and "Operations".
- * - Clicking either toggles the view locally and reveals the respective buttons below (no navigation).
- * - A small "Back" control returns to the two-button view.
- * - Individual tiles (e.g. Vehicle Master, Trip Manager) still navigate to their routes with <Link/>.
- * - NEW: Greets the user by name at the top.
+ * Dashboard with URL-driven sub-views:
+ * - Root shows two tiles: "Masters" and "Operations".
+ * - Clicking either switches to /?view=masters or /?view=operations.
+ * - Small "Back" clears ?view (back to root).
+ * - Individual tiles still navigate to their own routes (<Link/>).
  */
 
 function getCurrentRole() {
@@ -41,7 +39,6 @@ function getCurrentRole() {
 }
 
 function getCurrentUserName() {
-  // Try to extract a friendly name from localStorage
   try {
     const storedUser = localStorage.getItem('user');
     if (storedUser) {
@@ -79,7 +76,7 @@ const MASTER_TILES = [
   { to: '/create-route',           label: 'Create Route',            icon: RouteIcon,          roles: ['a'] },
   { to: '/vehicle-master',         label: 'Vehicle Master',          icon: Car,                roles: ['a'] },
   { to: '/customer-master',        label: 'Customer Master',         icon: Users,              roles: ['a'] },
-  { to: '/user-master',            label: 'User Master',             icon: UserCog,            roles: ['a'] },
+  { to: '/user-master',            label: 'Credential Master',       icon: UserCog,            roles: ['a'] },
   { to: '/driver-master',          label: 'Driver Master',           icon: IdCard,             roles: ['a'] },
   { to: '/employee-master',        label: 'Employee Master',         icon: BriefcaseBusiness,  roles: ['a'] },
   { to: '/loading-source-master',  label: 'Loading Source Master',   icon: Fuel,               roles: ['a'] }
@@ -87,14 +84,14 @@ const MASTER_TILES = [
 
 // Operation screens (incl. driver + accounts if allowed)
 const OPERATION_TILES = [
-  { to: '/create-order',   label: 'Create Order',         icon: Truck,         roles: ['a','e'] },
-  { to: '/list-order',     label: 'List Orders',          icon: ListOrdered,   roles: ['a','e'] },
-  { to: '/trip-manager',   label: 'Trip Manager',         icon: MapPinned,     roles: ['a','e','tr'] },
-  { to: '/trip-listing',   label: 'Trip Listing',         icon: RouteIcon,     roles: ['a','e','tr'] },
-  { to: '/accounts',         label: 'Accounts: PAY/REC',    icon: Wallet,        roles: ['a','ac'] },
-  // Driver-only ops so a single Operations view covers all cases:
-  { to: '/driver-trips',       label: 'Driver Trips',     icon: Car,           roles: ['d'] },
-  { to: '/driver-deliveries',  label: 'Driver Deliveries',icon: ClipboardList, roles: ['d'] }
+  { to: '/create-order',     label: 'Create Order',            icon: Truck,         roles: ['a','e'] },
+  { to: '/list-order',       label: 'List Orders',             icon: ListOrdered,   roles: ['a','e'] },
+  { to: '/trip-manager',     label: 'Trip Manager',            icon: MapPinned,     roles: ['a','e','tr'] },
+  { to: '/trip-listing',     label: 'Trip Listing',            icon: RouteIcon,     roles: ['a','e','tr'] },
+  { to: '/accounts',         label: 'Accounts: PAY/REC',       icon: Wallet,        roles: ['a','ac'] },
+  // Driver-only ops
+  { to: '/driver-trips',       label: 'Driver Trips',          icon: Car,           roles: ['d'] },
+  { to: '/driver-deliveries',  label: 'Driver Deliveries',     icon: ClipboardList, roles: ['d'] }
 ];
 
 // Gradient palette
@@ -114,9 +111,11 @@ const COLORS = [
 ];
 
 export default function Dashboard() {
+  const [params, setParams] = useSearchParams();
+  const view = params.get('view') ?? 'root'; // 'root' | 'masters' | 'operations'
+
   const role = useMemo(getCurrentRole, []);
   const userName = useMemo(getCurrentUserName, []);
-  const [view, setView] = useState('root'); // 'root' | 'masters' | 'operations'
 
   const visibleMasters = useMemo(
     () => MASTER_TILES.filter(t => t.roles.includes(role)),
@@ -127,13 +126,12 @@ export default function Dashboard() {
     [role]
   );
 
-  const goRoot = () => setView('root');
+  const goRoot = () => setParams({}, { replace: false }); // clears ?view
 
   return (
     <div className="min-h-screen bg-gradient-to-br from-gray-50 to-gray-100 p-6">
       <header className="mb-6 flex items-center justify-between">
         <div>
-          {/* 👋 Personalized welcome */}
           <h2 className="text-2xl font-semibold text-gray-900">
             Welcome, {userName}!
           </h2>
@@ -159,32 +157,30 @@ export default function Dashboard() {
         </div>
       </header>
 
-      {/* Root: just two big buttons that toggle local state */}
+      {/* Root: two big buttons that navigate via URL to preserve history */}
       {view === 'root' && (
         <div className="grid gap-5 sm:grid-cols-2">
-          {/* Masters button (only if there is at least one tile for the role) */}
           {visibleMasters.length > 0 && (
-            <button
-              onClick={() => setView('masters')}
+            <Link
+              to={{ pathname: '/', search: '?view=masters' }}
               className={tileButtonClass('from-indigo-500 to-indigo-600')}
             >
               <TileButtonInner icon={Blocks} title="Masters" desc="All master data screens" />
-            </button>
+            </Link>
           )}
 
-          {/* Operations button (only if there is at least one tile for the role) */}
           {visibleOps.length > 0 && (
-            <button
-              onClick={() => setView('operations')}
+            <Link
+              to={{ pathname: '/', search: '?view=operations' }}
               className={tileButtonClass('from-emerald-500 to-emerald-600')}
             >
               <TileButtonInner icon={Wrench} title="Operations" desc="Orders, trips, accounts and more" />
-            </button>
+            </Link>
           )}
         </div>
       )}
 
-      {/* Masters: show master links inline (no navigation to a category page) */}
+      {/* Masters */}
       {view === 'masters' && (
         <>
           <TileGrid tiles={visibleMasters} />
@@ -192,7 +188,7 @@ export default function Dashboard() {
         </>
       )}
 
-      {/* Operations: show ops links inline */}
+      {/* Operations */}
       {view === 'operations' && (
         <>
           <TileGrid tiles={visibleOps} />

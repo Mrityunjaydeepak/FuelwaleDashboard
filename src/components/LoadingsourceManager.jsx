@@ -15,13 +15,13 @@ const emptyForm = {
   city: '',
   pin: '',
   stateCd: '',
-  routeIds: [] // stores selected route ids
+  routeIds: [] // multiple selected route IDs
 };
 
 export default function LoadingSourceMaster() {
   const [list, setList] = useState([]);
   const [filtered, setFiltered] = useState([]);
-  const [routes, setRoutes] = useState([]); // all routes
+  const [routes, setRoutes] = useState([]); // all routes [{_id, name}]
   const [routeMap, setRouteMap] = useState({});
   const [search, setSearch] = useState('');
   const [error, setError] = useState(null);
@@ -155,7 +155,7 @@ export default function LoadingSourceMaster() {
   const onChangeState = (v) => onChange('stateCd', v.toUpperCase().slice(0, 2));
   const onChangePin   = (v) => onChange('pin', v.replace(/\D/g, ''));
 
-  // NEW: handle multi-select dropdown change
+  // Multi-select routes change
   const onRoutesChange = (e) => {
     const selected = Array.from(e.target.selectedOptions).map(opt => opt.value);
     setForm(f => ({ ...f, routeIds: selected }));
@@ -183,7 +183,7 @@ export default function LoadingSourceMaster() {
         city: form.city?.trim() || '',
         stateCd: form.stateCd.trim().toUpperCase(),
         ...(form.pin !== '' ? { pin: Number(form.pin) } : {}),
-        routeIds: form.routeIds
+        routeIds: form.routeIds // multiple IDs
       };
       if (editingId) await api.put(`${BASE}/${editingId}`, payload);
       else await api.post(BASE, payload);
@@ -313,7 +313,7 @@ export default function LoadingSourceMaster() {
               <TextField label="State Code (2)" value={form.stateCd} onChange={onChangeState} />
               <TextField label="PIN" value={form.pin} onChange={onChangePin} type="number" />
 
-              {/* NEW: Routes multi-select dropdown */}
+              {/* Routes multi-select */}
               <div className="md:col-span-3">
                 <label className="block text-sm text-gray-600 mb-1">Routes</label>
                 <select

@@ -1,192 +1,82 @@
 // src/components/NavBar.jsx
-import React, { useMemo, useState } from 'react';
-import { NavLink } from 'react-router-dom';
-import { useAuth } from '../contexts/AuthContext';
-import {
-  Home,
-  Building2,
-  Route as RouteIcon,
-  Truck,
-  ClipboardList,
-  MapPinned,
-  Car,
-  Users,
-  UserCog,
-  IdCard,
-  BriefcaseBusiness,
-  Fuel,
-  LogOut,
-  ChevronLeft,
-  Menu
-} from 'lucide-react';
-
-function roleOf(user) {
-  // normalize to 'a' | 'e' | 'd'
-  const raw = (user?.userType || '').toString().toLowerCase();
-  if (['a', 'e', 'd'].includes(raw)) return raw;
-  return 'a';
-}
-
-// Define your nav in one place (roles: 'a' admin, 'e' executive, 'd' driver)
-const NAV_GROUPS = [
-  {
-    heading: 'Overview',
-    items: [
-      { to: '/',                 label: 'Dashboard',              icon: Home,           roles: ['a','e','d'] },
-    ]
-  },
-  {
-    heading: 'Operations',
-    items: [
-      { to: '/create-order',     label: 'Create Order',           icon: Truck,          roles: ['a','e'] },
-      { to: '/list-order',       label: 'List Orders',            icon: ClipboardList,  roles: ['a','e'] },
-      { to: '/trip-manager',     label: 'Trip Manager',           icon: MapPinned,      roles: ['a','e'] },
-      { to: '/trip-listing',     label: 'Trip Listing',           icon: RouteIcon,      roles: ['a','e'] },
-      { to: '/fleet-listing',     label: 'Fleet Listing',           icon: RouteIcon,      roles: ['a','e'] },
-      { to: '/driver-trips',     label: 'Driver Trips',           icon: Car,            roles: ['d'] },
-      { to: '/driver-deliveries',label: 'Driver Deliveries',      icon: ClipboardList,  roles: ['d'] },
-      { to: '/invoice-listing',label: 'Invoice Listings',      icon: ClipboardList,  roles: ['a'] },
-      { to: '/payment-manager',label: 'Payment Manager',      icon: ClipboardList,  roles: ['a'] },
-      { to: '/accounts',label: 'Accounts',      icon: ClipboardList,  roles: ['a'] },
-    ]
-  },
-  {
-    heading: 'Masters',
-    items: [
-      { to: '/create-depot',           label: 'Create Depot',           icon: Building2,        roles: ['a'] },
-      { to: '/create-route',           label: 'Create Route',           icon: RouteIcon,        roles: ['a'] },
-      { to: '/vehicle-master',         label: 'Vehicle Master',         icon: Car,              roles: ['a'] },
-      { to: '/customer-master',        label: 'Customer Master',        icon: Users,            roles: ['a'] },
-      { to: '/user-master',            label: 'User Master',            icon: UserCog,          roles: ['a'] },
-      { to: '/driver-master',          label: 'Driver Master',          icon: IdCard,           roles: ['a'] },
-      { to: '/employee-master',        label: 'Employee Master',        icon: BriefcaseBusiness,roles: ['a'] },
-      { to: '/loading-source-master',  label: 'Loading Source Master',  icon: Fuel,             roles: ['a'] },
-      { to: '/vehicle-allocation-master',  label: 'Vehicle Allocation Master',  icon: Car,             roles: ['a'] },
-    ]
-  }
-];
+import React from 'react';
+import { NavLink, useNavigate, useLocation } from 'react-router-dom';
+import { Home, ArrowLeft } from 'lucide-react';
 
 export default function NavBar() {
-  const { user, logout } = useAuth();
-  const role = roleOf(user);
+  const navigate = useNavigate();
+  const location = useLocation();
+  const atRoot = location.pathname === '/';
 
-  const [collapsed, setCollapsed] = useState(false);
-
-  // Filter by role once
-  const groups = useMemo(() => {
-    return NAV_GROUPS.map(g => ({
-      heading: g.heading,
-      items: g.items.filter(i => i.roles.includes(role))
-    })).filter(g => g.items.length > 0);
-  }, [role]);
+  const goBack = () => {
+    if (!atRoot) navigate(-1);
+  };
 
   return (
-    <aside
+    <div
       className={[
-        'h-screen sticky top-0',
-        'bg-gradient-to-b from-slate-900 to-slate-800 text-white',
-        'flex flex-col border-r border-white/10',
-        collapsed ? 'w-20' : 'w-64',
-        'transition-[width] duration-200'
+        'fixed top-3 left-0 right-0 z-50',
+        'flex justify-center',
+        'pointer-events-none'
       ].join(' ')}
     >
-      {/* Brand / Collapse */}
-      <div className="flex items-center justify-between px-3 py-3">
-        <div className="flex items-center gap-3">
-          <div className="h-9 w-9 rounded-lg bg-white/10 flex items-center justify-center">
-            {/* tiny logo-ish box */}
-            <Fuel size={18} />
-          </div>
-          {!collapsed && (
-            <div className="leading-tight">
-              <div className="font-extrabold tracking-wide">FuelWale</div>
-              <div className="text-xs text-white/70 -mt-0.5">Admin Console</div>
-            </div>
-          )}
-        </div>
-        <button
-          onClick={() => setCollapsed(v => !v)}
-          className="inline-flex items-center justify-center rounded-md p-2 hover:bg-white/10"
-          title={collapsed ? 'Expand' : 'Collapse'}
+      <nav
+        className={[
+          'pointer-events-auto',
+          // width constraint (reduce width here)
+          'w-full max-w-xl sm:max-w-2xl', // <— tighten/loosen here
+          'mx-3', // small side gutters on tiny screens
+          // Glass look
+          'backdrop-blur-md bg-white/10 dark:bg-slate-900/30',
+          'border border-white/20 shadow-lg shadow-black/10',
+          'rounded-2xl px-3 sm:px-4 h-12',
+          'flex items-center justify-between',
+        ].join(' ')}
+        aria-label="Primary"
+      >
+        {/* Left: Home */}
+        <NavLink
+          to="/"
+          className={({ isActive }) =>
+            [
+              'inline-flex items-center gap-2 rounded-xl',
+              'px-3 py-2 text-sm font-medium transition',
+              isActive
+                ? 'bg-white text-slate-900'
+                : 'text-white/90 hover:bg-white/10'
+            ].join(' ')
+          }
+          title="Go to Dashboard"
         >
-          {collapsed ? <Menu size={18} /> : <ChevronLeft size={18} />}
-        </button>
-      </div>
+          <Home size={18} />
+          <span className="hidden sm:inline">Home</span>
+        </NavLink>
 
-      {/* Nav */}
-      <nav className="mt-2 flex-1 overflow-y-auto scrollbar-thin scrollbar-thumb-white/10 scrollbar-track-transparent">
-        {groups.map(({ heading, items }) => (
-          <div key={heading} className="px-2">
-            {/* Group heading */}
-            {!collapsed && (
-              <div className="px-3 py-2 text-[11px] uppercase tracking-wide text-white/50">
-                {heading}
-              </div>
-            )}
-
-            <ul className="space-y-1">
-              {items.map(({ to, label, icon: Icon }) => (
-                <li key={to}>
-                  <NavLink
-                    to={to}
-                    className={({ isActive }) =>
-                      [
-                        'group flex items-center gap-3 rounded-lg px-3 py-2',
-                        'transition-colors',
-                        isActive
-                          ? 'bg-white text-slate-900 shadow-sm'
-                          : 'text-white/90 hover:bg-white/10'
-                      ].join(' ')
-                    }
-                    title={collapsed ? label : undefined}
-                  >
-                    <div className="shrink-0 rounded-md bg-white/10 p-1.5 group-hover:bg-white/20">
-                      <Icon size={18} />
-                    </div>
-                    {!collapsed && (
-                      <span className="truncate">{label}</span>
-                    )}
-                  </NavLink>
-                </li>
-              ))}
-            </ul>
-
-            {/* subtle divider */}
-            <div className="my-3 border-t border-white/10" />
+        {/* Center: Brand */}
+        <div className="absolute inset-0 flex items-center justify-center pointer-events-none">
+          <div className="text-xs sm:text-sm font-semibold tracking-wide text-white/80 select-none">
+            FuelWale
           </div>
-        ))}
-      </nav>
-
-      {/* User panel + Logout */}
-      <div className="p-3 mt-auto">
-        <div className="flex items-center gap-3 px-3 py-2 rounded-lg bg-white/5">
-          <div className="h-8 w-8 rounded-full bg-white/15 flex items-center justify-center">
-            <Users size={16} />
-          </div>
-          {!collapsed && (
-            <div className="min-w-0">
-              <div className="text-sm font-semibold truncate">
-                {user?.name || user?.username || 'User'}
-              </div>
-              <div className="text-xs text-white/70">
-                {role === 'a' ? 'Admin' : role === 'e' ? 'Executive' : 'Driver'}
-              </div>
-            </div>
-          )}
         </div>
 
+        {/* Right: Back */}
         <button
-          onClick={logout}
+          type="button"
+          onClick={goBack}
+          disabled={atRoot}
           className={[
-            'mt-3 w-full inline-flex items-center justify-center gap-2',
-            'rounded-lg px-3 py-2 bg-rose-500/90 hover:bg-rose-500',
-            'text-white transition-colors'
+            'inline-flex items-center gap-2 rounded-xl',
+            'px-3 py-2 text-sm font-medium transition',
+            atRoot
+              ? 'text-white/40 cursor-not-allowed'
+              : 'text-white/90 hover:bg-white/10'
           ].join(' ')}
+          title={atRoot ? 'Already on Dashboard' : 'Go Back'}
         >
-          <LogOut size={18} />
-          {!collapsed && <span>Logout</span>}
+          <span className="hidden sm:inline">Back</span>
+          <ArrowLeft size={18} />
         </button>
-      </div>
-    </aside>
+      </nav>
+    </div>
   );
 }

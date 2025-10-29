@@ -1,3 +1,4 @@
+// src/components/PayRecManagement.jsx
 import React, { useEffect, useMemo, useState } from 'react';
 import api from '../api';
 import {
@@ -45,7 +46,6 @@ export default function PayRecManagement() {
     refNo: '',
     amount: '',
     remarks: '',
-    mgr: '',              // <<< NEW
     status: 'ACTIVE'
   };
 
@@ -54,6 +54,7 @@ export default function PayRecManagement() {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
 
+  // Filters
   const [fromDt, setFromDt] = useState('');
   const [toDt, setToDt] = useState('');
   const [fltTrType, setFltTrType] = useState('');
@@ -62,6 +63,7 @@ export default function PayRecManagement() {
   const [page, setPage] = useState(1);
   const limit = 20;
 
+  // Edit
   const [editingId, setEditingId] = useState(null);
   const [editForm, setEditForm] = useState(initialForm);
   const [editLoading, setEditLoading] = useState(false);
@@ -99,6 +101,7 @@ export default function PayRecManagement() {
 
   useEffect(() => { loadRows().catch(() => setError('Failed to load records')); }, []);
 
+  // Apply client-side filters too (snappy UI)
   const filtered = useMemo(() => {
     let arr = [...rows];
     if (fromDt) arr = arr.filter((x) => new Date(x.date).getTime() >= new Date(fromDt).getTime());
@@ -108,7 +111,7 @@ export default function PayRecManagement() {
     if (q) {
       const qq = q.toLowerCase();
       arr = arr.filter((x) =>
-        [x.partyCode, x.partyName, x.forPartyCode, x.forPartyName, x.refNo, x.remarks, x.mgr]
+        [x.partyCode, x.partyName, x.forPartyCode, x.forPartyName, x.refNo, x.remarks]
           .filter(Boolean)
           .some((f) => String(f).toLowerCase().includes(qq))
       );
@@ -140,18 +143,17 @@ export default function PayRecManagement() {
     setLoading(true);
     try {
       await api.post('/payrec', {
-        date:        form.date || undefined,
-        trType:      form.trType,
-        partyCode:   form.partyCode,
-        partyName:   form.partyName || undefined,
+        date:         form.date || undefined,
+        trType:       form.trType,
+        partyCode:    form.partyCode,
+        partyName:    form.partyName || undefined,
         forPartyCode: is1to4(form.trType) ? undefined : form.forPartyCode || undefined,
         forPartyName: is1to4(form.trType) ? undefined : form.forPartyName || undefined,
-        mode:        form.mode,
-        refNo:       form.refNo || undefined,
-        amount:      numOrUndefined(form.amount),
-        remarks:     form.remarks || undefined,
-        mgr:         form.mgr || undefined,          // <<< send Mgr
-        status:      form.status || 'ACTIVE'
+        mode:         form.mode,
+        refNo:        form.refNo || undefined,
+        amount:       numOrUndefined(form.amount),
+        remarks:      form.remarks || undefined,
+        status:       form.status || 'ACTIVE'
       });
       await loadRows();
       setForm(initialForm);
@@ -193,7 +195,6 @@ export default function PayRecManagement() {
       refNo:         r.refNo || '',
       amount:        (r.amount ?? '').toString(),
       remarks:       r.remarks || '',
-      mgr:           r.mgr || '',                // <<< load Mgr
       status:        r.status || 'ACTIVE'
     });
     setError('');
@@ -219,18 +220,17 @@ export default function PayRecManagement() {
     setEditLoading(true);
     try {
       const payload = {
-        date:        editForm.date || undefined,
-        trType:      editForm.trType,
-        partyCode:   editForm.partyCode,
-        partyName:   editForm.partyName || undefined,
+        date:         editForm.date || undefined,
+        trType:       editForm.trType,
+        partyCode:    editForm.partyCode,
+        partyName:    editForm.partyName || undefined,
         forPartyCode: is1to4(editForm.trType) ? undefined : editForm.forPartyCode || undefined,
         forPartyName: is1to4(editForm.trType) ? undefined : editForm.forPartyName || undefined,
-        mode:        editForm.mode,
-        refNo:       editForm.refNo || undefined,
-        amount:      numOrUndefined(editForm.amount),
-        remarks:     editForm.remarks || undefined,
-        mgr:         editForm.mgr || undefined,      // <<< update Mgr
-        status:      editForm.status || 'ACTIVE'
+        mode:         editForm.mode,
+        refNo:        editForm.refNo || undefined,
+        amount:       numOrUndefined(editForm.amount),
+        remarks:      editForm.remarks || undefined,
+        status:       editForm.status || 'ACTIVE'
       };
       const res = await api.put(`/payrec/${editingId}`, payload);
       setRows((rs) => rs.map((r) => (r._id === editingId ? res.data : r)));
@@ -246,76 +246,119 @@ export default function PayRecManagement() {
   const newForPartyDisabled = is1to4(form.trType);
   const editForPartyDisabled = is1to4(editForm.trType);
 
+  const StatusPill = ({ value }) => {
+    const map = {
+      ACTIVE: 'bg-emerald-100 text-emerald-800',
+      POSTED: 'bg-blue-100 text-blue-800',
+      DELETED: 'bg-red-100 text-red-800'
+    };
+    return <span className={`px-2 py-0.5 rounded text-xs font-medium ${map[value] || 'bg-gray-100 text-gray-700'}`}>{value}</span>;
+  };
+
   return (
-    <div className="p-6 bg-gray-50 min-h-screen space-y-6">
-      <div className="bg-white p-6 rounded-lg shadow">
-        <h2 className="text-2xl font-semibold mb-4 flex items-center gap-2">
-          <WalletIcon size={24} /> Accounts — PAY/REC
-        </h2>
-
-        {/* Filters */}
-        <div className="grid grid-cols-1 md:grid-cols-6 gap-4 mb-6">
-          <div>
-            <label className="block mb-1 font-semibold">From</label>
-            <input type="date" value={fromDt} onChange={(e)=>setFromDt(e.target.value)}
-                   className="w-full border rounded px-3 py-2 focus:ring-2 focus:ring-green-500"/>
-          </div>
-          <div>
-            <label className="block mb-1 font-semibold">To</label>
-            <input type="date" value={toDt} onChange={(e)=>setToDt(e.target.value)}
-                   className="w-full border rounded px-3 py-2 focus:ring-2 focus:ring-green-500"/>
-          </div>
-          <div>
-            <label className="block mb-1 font-semibold">Tr Type</label>
-            <select value={fltTrType} onChange={(e)=>setFltTrType(e.target.value)}
-                    className="w-full border rounded px-3 py-2 focus:ring-2 focus:ring-green-500">
-              <option value="">All</option>
-              {TR_TYPES.map(t=> <option key={t.value} value={t.value}>{t.label}</option>)}
-            </select>
-          </div>
-          <div>
-            <label className="block mb-1 font-semibold">Status</label>
-            <select value={fltStatus} onChange={(e)=>setFltStatus(e.target.value)}
-                    className="w-full border rounded px-3 py-2 focus:ring-2 focus:ring-green-500">
-              <option value="">Active/Posted (default)</option>
-              {STATUSES.map(s=> <option key={s.value} value={s.value}>{s.label}</option>)}
-            </select>
-          </div>
-          <div className="md:col-span-2">
-            <label className="block mb-1 font-semibold">Search</label>
-            <input value={q} onChange={(e)=>setQ(e.target.value)} placeholder="party, forParty, refNo, remarks, mgr…"
-                   className="w-full border rounded px-3 py-2 focus:ring-2 focus:ring-green-500"/>
-          </div>
+    <div className="p-6 bg-gradient-to-b from-slate-50 to-white min-h-screen space-y-6">
+      {/* Header */}
+      <div className="flex items-center gap-3">
+        <div className="h-10 w-10 rounded-xl bg-emerald-100 text-emerald-700 flex items-center justify-center">
+          <WalletIcon size={20} />
         </div>
+        <div>
+          <h2 className="text-2xl font-bold">Accounts — PAY/REC</h2>
+          <p className="text-sm text-slate-500">Manage receipts, payments and adjustments</p>
+        </div>
+      </div>
 
-        {error && <div className="text-red-600 mb-4">{error}</div>}
-
-        {/* Create Form */}
-        <form onSubmit={handleSubmit} className="space-y-4">
-          <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
+      {/* FILTERS CARD */}
+      <div className="bg-white/90 backdrop-blur rounded-xl shadow border border-slate-100">
+        <div className="px-5 py-4 border-b border-slate-100 flex items-center justify-between">
+          <h3 className="font-semibold">Filters</h3>
+          <div className="text-xs text-slate-500">Showing {filtered.length} result(s)</div>
+        </div>
+        <div className="p-5">
+          <div className="grid grid-cols-1 md:grid-cols-6 gap-4">
             <div>
-              <label className="block mb-1 font-semibold">Date</label>
-              <input type="date" name="date" value={form.date} onChange={handleChange} required
-                     className="w-full border rounded px-3 py-2 focus:ring-2 focus:ring-green-500"/>
+              <label className="block mb-1 text-sm font-medium text-slate-600">From</label>
+              <input type="date" value={fromDt} onChange={(e)=>setFromDt(e.target.value)}
+                     className="w-full border rounded-lg px-3 py-2 focus:ring-2 focus:ring-emerald-500"/>
             </div>
             <div>
-              <label className="block mb-1 font-semibold">Transaction Type</label>
+              <label className="block mb-1 text-sm font-medium text-slate-600">To</label>
+              <input type="date" value={toDt} onChange={(e)=>setToDt(e.target.value)}
+                     className="w-full border rounded-lg px-3 py-2 focus:ring-2 focus:ring-emerald-500"/>
+            </div>
+            <div>
+              <label className="block mb-1 text-sm font-medium text-slate-600">Tr Type</label>
+              <select value={fltTrType} onChange={(e)=>setFltTrType(e.target.value)}
+                      className="w-full border rounded-lg px-3 py-2 focus:ring-2 focus:ring-emerald-500">
+                <option value="">All</option>
+                {TR_TYPES.map(t=> <option key={t.value} value={t.value}>{t.label}</option>)}
+              </select>
+            </div>
+            <div>
+              <label className="block mb-1 text-sm font-medium text-slate-600">Status</label>
+              <select value={fltStatus} onChange={(e)=>setFltStatus(e.target.value)}
+                      className="w-full border rounded-lg px-3 py-2 focus:ring-2 focus:ring-emerald-500">
+                <option value="">Active/Posted</option>
+                {STATUSES.map(s=> <option key={s.value} value={s.value}>{s.label}</option>)}
+              </select>
+            </div>
+            <div className="md:col-span-2">
+              <label className="block mb-1 text-sm font-medium text-slate-600">Search</label>
+              <input value={q} onChange={(e)=>setQ(e.target.value)} placeholder="party, forParty, refNo, remarks…"
+                     className="w-full border rounded-lg px-3 py-2 focus:ring-2 focus:ring-emerald-500"/>
+            </div>
+          </div>
+
+          <div className="flex flex-wrap gap-3 mt-4">
+            <button
+              onClick={() => { setFromDt(''); setToDt(''); setFltTrType(''); setFltStatus(''); setQ(''); setPage(1); }}
+              className="px-3 py-2 rounded-lg border bg-white hover:bg-slate-50"
+            >
+              Clear Filters
+            </button>
+            <button
+              onClick={() => loadRows()}
+              className="px-3 py-2 rounded-lg bg-emerald-600 text-white hover:bg-emerald-700"
+            >
+              Refresh
+            </button>
+          </div>
+        </div>
+      </div>
+
+      {/* FORM CARD */}
+      <div className="bg-white/90 backdrop-blur rounded-xl shadow border border-slate-100">
+        <div className="px-5 py-4 border-b border-slate-100">
+          <h3 className="font-semibold">Create New Entry</h3>
+        </div>
+
+        {error && <div className="px-5 pt-4 text-red-600">{error}</div>}
+
+        <form onSubmit={handleSubmit} className="p-5 space-y-4">
+          <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
+            <div>
+              <label className="block mb-1 text-sm font-medium text-slate-600">Date</label>
+              <input type="date" name="date" value={form.date} onChange={handleChange} required
+                     className="w-full border rounded-lg px-3 py-2 focus:ring-2 focus:ring-emerald-500"/>
+            </div>
+            <div>
+              <label className="block mb-1 text-sm font-medium text-slate-600">Transaction Type</label>
               <select name="trType" value={form.trType} onChange={handleChange}
-                      className="w-full border rounded px-3 py-2 focus:ring-2 focus:ring-green-500">
+                      className="w-full border rounded-lg px-3 py-2 focus:ring-2 focus:ring-emerald-500">
                 {TR_TYPES.map(t => <option key={t.value} value={t.value}>{t.label}</option>)}
               </select>
             </div>
             <div>
-              <label className="block mb-1 font-semibold">Mode</label>
+              <label className="block mb-1 text-sm font-medium text-slate-600">Mode</label>
               <select name="mode" value={form.mode} onChange={handleChange}
-                      className="w-full border rounded px-3 py-2 focus:ring-2 focus:ring-green-500">
+                      className="w-full border rounded-lg px-3 py-2 focus:ring-2 focus:ring-emerald-500">
                 {MODES.map(m => <option key={m.value} value={m.value}>{m.label}</option>)}
               </select>
             </div>
             <div>
-              <label className="block mb-1 font-semibold">Status</label>
+              <label className="block mb-1 text-sm font-medium text-slate-600">Status</label>
               <select name="status" value={form.status} onChange={handleChange}
-                      className="w-full border rounded px-3 py-2 focus:ring-2 focus:ring-green-500">
+                      className="w-full border rounded-lg px-3 py-2 focus:ring-2 focus:ring-emerald-500">
                 {STATUSES.filter(s => s.value !== 'DELETED').map(s => (
                   <option key={s.value} value={s.value}>{s.label}</option>
                 ))}
@@ -323,98 +366,88 @@ export default function PayRecManagement() {
             </div>
 
             <div>
-              <label className="block mb-1 font-semibold">Party Code</label>
+              <label className="block mb-1 text-sm font-medium text-slate-600">Party Code</label>
               <input name="partyCode" value={form.partyCode} onChange={handleChange} required placeholder="CUST001"
-                     className="w-full border rounded px-3 py-2 focus:ring-2 focus:ring-green-500"/>
+                     className="w-full border rounded-lg px-3 py-2 focus:ring-2 focus:ring-emerald-500"/>
             </div>
             <div>
-              <label className="block mb-1 font-semibold">Party Name</label>
+              <label className="block mb-1 text-sm font-medium text-slate-600">Party Name</label>
               <input name="partyName" value={form.partyName} onChange={handleChange} placeholder="ABC Fuels"
-                     className="w-full border rounded px-3 py-2 focus:ring-2 focus:ring-green-500"/>
+                     className="w-full border rounded-lg px-3 py-2 focus:ring-2 focus:ring-emerald-500"/>
             </div>
 
             <div>
-              <label className="block mb-1 font-semibold">For Party Code</label>
+              <label className="block mb-1 text-sm font-medium text-slate-600">For Party Code</label>
               <input
                 name="forPartyCode"
-                value={is1to4(form.trType) ? form.partyCode : form.forPartyCode}
+                value={newForPartyDisabled ? form.partyCode : form.forPartyCode}
                 onChange={handleChange}
-                placeholder={is1to4(form.trType) ? 'Auto = Party Code' : 'CUST002'}
-                disabled={is1to4(form.trType)}
-                className={`w-full border rounded px-3 py-2 ${is1to4(form.trType) ? 'bg-gray-100' : 'focus:ring-2 focus:ring-green-500'}`}
+                placeholder={newForPartyDisabled ? 'Auto = Party Code' : 'CUST002'}
+                disabled={newForPartyDisabled}
+                className={`w-full border rounded-lg px-3 py-2 ${newForPartyDisabled ? 'bg-gray-100' : 'focus:ring-2 focus:ring-emerald-500'}`}
               />
             </div>
             <div>
-              <label className="block mb-1 font-semibold">For Party Name</label>
+              <label className="block mb-1 text-sm font-medium text-slate-600">For Party Name</label>
               <input
                 name="forPartyName"
-                value={is1to4(form.trType) ? form.partyName : form.forPartyName}
+                value={newForPartyDisabled ? form.partyName : form.forPartyName}
                 onChange={handleChange}
-                placeholder={is1to4(form.trType) ? 'Auto = Party Name' : 'XYZ Logistics'}
-                disabled={is1to4(form.trType)}
-                className={`w-full border rounded px-3 py-2 ${is1to4(form.trType) ? 'bg-gray-100' : 'focus:ring-2 focus:ring-green-500'}`}
+                placeholder={newForPartyDisabled ? 'Auto = Party Name' : 'XYZ Logistics'}
+                disabled={newForPartyDisabled}
+                className={`w-full border rounded-lg px-3 py-2 ${newForPartyDisabled ? 'bg-gray-100' : 'focus:ring-2 focus:ring-emerald-500'}`}
               />
             </div>
 
             <div>
-              <label className="block mb-1 font-semibold">Ref No</label>
+              <label className="block mb-1 text-sm font-medium text-slate-600">Ref No</label>
               <input name="refNo" value={form.refNo} onChange={handleChange} placeholder="NEFT/UTR etc."
-                     className="w-full border rounded px-3 py-2 focus:ring-2 focus:ring-green-500"/>
+                     className="w-full border rounded-lg px-3 py-2 focus:ring-2 focus:ring-emerald-500"/>
             </div>
             <div>
-              <label className="block mb-1 font-semibold">Amount</label>
+              <label className="block mb-1 text-sm font-medium text-slate-600">Amount</label>
               <input type="number" step="0.01" name="amount" value={form.amount} onChange={handleChange} required
-                     placeholder="0.00" className="w-full border rounded px-3 py-2 focus:ring-2 focus:ring-green-500"/>
+                     placeholder="0.00" className="w-full border rounded-lg px-3 py-2 focus:ring-2 focus:ring-emerald-500"/>
             </div>
 
-            {/* NEW: Manager */}
-            <div>
-              <label className="block mb-1 font-semibold">Mgr (Manager)</label>
-              <input name="mgr" value={form.mgr} onChange={handleChange} placeholder="Manager name / ID"
-                     className="w-full border rounded px-3 py-2 focus:ring-2 focus:ring-green-500"/>
-            </div>
-
-            <div className="md:col-span-3">
-              <label className="block mb-1 font-semibold">Remarks</label>
+            <div className="md:col-span-2">
+              <label className="block mb-1 text-sm font-medium text-slate-600">Remarks</label>
               <input name="remarks" value={form.remarks} onChange={handleChange} placeholder="Notes…"
-                     className="w-full border rounded px-3 py-2 focus:ring-2 focus:ring-green-500"/>
+                     className="w-full border rounded-lg px-3 py-2 focus:ring-2 focus:ring-emerald-500"/>
             </div>
           </div>
 
-          <div className="flex flex-col md:flex-row gap-3 mt-2">
+          <div className="flex flex-wrap gap-3 mt-2">
             <button type="submit" disabled={loading}
-                    className="inline-flex items-center justify-center gap-2 px-4 py-2 bg-green-600 text-white rounded hover:bg-green-700">
+                    className="inline-flex items-center justify-center gap-2 px-4 py-2 bg-emerald-600 text-white rounded-lg hover:bg-emerald-700">
               {loading ? 'Adding…' : (<><PlusIcon size={16}/> Add</>)}
             </button>
             <button type="button" onClick={() => { setForm(initialForm); }}
-                    className="inline-flex items-center justify-center gap-2 px-4 py-2 bg-gray-100 rounded hover:bg-gray-200">
+                    className="inline-flex items-center justify-center gap-2 px-4 py-2 bg-white border rounded-lg hover:bg-slate-50">
               Clear
-            </button>
-            <button type="button" onClick={() => { window.location.href = '/'; }}
-                    className="inline-flex items-center justify-center gap-2 px-4 py-2 bg-gray-100 rounded hover:bg-gray-200">
-              Save &amp; Exit
             </button>
           </div>
         </form>
       </div>
 
       {/* TABLE */}
-      <div className="bg-white p-6 rounded-lg shadow overflow-x-auto">
-        <h3 className="text-xl font-medium mb-4">PAY/REC Entries</h3>
-
-        <div className="flex items-center gap-2 mb-3">
-          <button className="px-3 py-1 border rounded disabled:opacity-50"
-                  onClick={()=> setPage((p)=> Math.max(1, p-1))}
-                  disabled={page<=1}>Prev</button>
-          <span className="text-sm">Page {page} / {pages}</span>
-          <button className="px-3 py-1 border rounded disabled:opacity-50"
-                  onClick={()=> setPage((p)=> Math.min(pages, p+1))}
-                  disabled={page>=pages}>Next</button>
+      <div className="bg-white/90 backdrop-blur rounded-xl shadow border border-slate-100 overflow-x-auto">
+        <div className="px-5 py-4 border-b border-slate-100 flex items-center justify-between">
+          <h3 className="font-semibold">PAY/REC Entries</h3>
+          <div className="flex items-center gap-2">
+            <button className="px-3 py-1.5 border rounded-lg disabled:opacity-50"
+                    onClick={()=> setPage((p)=> Math.max(1, p-1))}
+                    disabled={page<=1}>Prev</button>
+            <span className="text-sm text-slate-600">Page {page} / {pages}</span>
+            <button className="px-3 py-1.5 border rounded-lg disabled:opacity-50"
+                    onClick={()=> setPage((p)=> Math.min(pages, p+1))}
+                    disabled={page>=pages}>Next</button>
+          </div>
         </div>
 
-        <table className="min-w-full divide-y divide-gray-200">
+        <table className="min-w-full">
           <thead>
-            <tr className="bg-gray-100">
+            <tr className="bg-emerald-50 text-emerald-900">
               <th className="px-3 py-2 text-left text-sm font-semibold">#</th>
               <th className="px-3 py-2 text-left text-sm font-semibold">Date</th>
               <th className="px-3 py-2 text-left text-sm font-semibold">Tr Type</th>
@@ -424,77 +457,72 @@ export default function PayRecManagement() {
               <th className="px-3 py-2 text-left text-sm font-semibold">Ref No</th>
               <th className="px-3 py-2 text-right text-sm font-semibold">Amount</th>
               <th className="px-3 py-2 text-left text-sm font-semibold">Remarks</th>
-              <th className="px-3 py-2 text-left text-sm font-semibold">Mgr</th> {/* NEW column */}
               <th className="px-3 py-2 text-left text-sm font-semibold">Status</th>
               <th className="px-3 py-2 text-left text-sm font-semibold">Created</th>
               <th className="px-3 py-2 text-center text-sm font-semibold">Actions</th>
             </tr>
           </thead>
-          <tbody className="divide-y divide-gray-100">
+          <tbody className="divide-y divide-slate-100">
             {view.map((r, idx) => (
-              <tr key={r._id} className="hover:bg-gray-50">
+              <tr key={r._id} className="hover:bg-slate-50">
                 {editingId === r._id ? (
                   <>
                     <td className="px-3 py-2 text-sm">{(page-1)*limit + idx + 1}</td>
                     <td className="px-3 py-2">
                       <input type="date" name="date" value={editForm.date} onChange={handleEditChange}
-                             className="w-full border rounded px-2 py-1"/>
+                             className="w-full border rounded-lg px-2 py-1"/>
                     </td>
                     <td className="px-3 py-2">
                       <select name="trType" value={editForm.trType} onChange={handleEditChange}
-                              className="w-full border rounded px-2 py-1">
+                              className="w-full border rounded-lg px-2 py-1">
                         {TR_TYPES.map(t => <option key={t.value} value={t.value}>{t.label}</option>)}
                       </select>
                     </td>
                     <td className="px-3 py-2">
                       <div className="grid grid-cols-1 gap-1">
                         <input name="partyCode" value={editForm.partyCode} onChange={handleEditChange}
-                               placeholder="CUST001" className="w-full border rounded px-2 py-1"/>
+                               placeholder="CUST001" className="w-full border rounded-lg px-2 py-1"/>
                         <input name="partyName" value={editForm.partyName} onChange={handleEditChange}
-                               placeholder="ABC Fuels" className="w-full border rounded px-2 py-1"/>
+                               placeholder="ABC Fuels" className="w-full border rounded-lg px-2 py-1"/>
                       </div>
                     </td>
                     <td className="px-3 py-2">
                       <div className="grid grid-cols-1 gap-1">
                         <input name="forPartyCode"
-                               value={is1to4(editForm.trType) ? editForm.partyCode : editForm.forPartyCode}
+                               value={editForPartyDisabled ? editForm.partyCode : editForm.forPartyCode}
                                onChange={handleEditChange}
-                               placeholder={is1to4(editForm.trType) ? 'Auto' : 'CUST002'}
-                               disabled={is1to4(editForm.trType)}
-                               className={`w-full border rounded px-2 py-1 ${is1to4(editForm.trType) ? 'bg-gray-100' : ''}`}/>
+                               placeholder={editForPartyDisabled ? 'Auto' : 'CUST002'}
+                               disabled={editForPartyDisabled}
+                               className={`w-full border rounded-lg px-2 py-1 ${editForPartyDisabled ? 'bg-gray-100' : ''}`}/>
                         <input name="forPartyName"
-                               value={is1to4(editForm.trType) ? editForm.partyName : editForm.forPartyName}
+                               value={editForPartyDisabled ? editForm.partyName : editForm.forPartyName}
                                onChange={handleEditChange}
-                               placeholder={is1to4(editForm.trType) ? 'Auto' : 'XYZ Logistics'}
-                               disabled={is1to4(editForm.trType)}
-                               className={`w-full border rounded px-2 py-1 ${is1to4(editForm.trType) ? 'bg-gray-100' : ''}`}/>
+                               placeholder={editForPartyDisabled ? 'Auto' : 'XYZ Logistics'}
+                               disabled={editForPartyDisabled}
+                               className={`w-full border rounded-lg px-2 py-1 ${editForPartyDisabled ? 'bg-gray-100' : ''}`}/>
                       </div>
                     </td>
                     <td className="px-3 py-2">
                       <select name="mode" value={editForm.mode} onChange={handleEditChange}
-                              className="w-full border rounded px-2 py-1">
+                              className="w-full border rounded-lg px-2 py-1">
                         {MODES.map(m => <option key={m.value} value={m.value}>{m.label}</option>)}
                       </select>
                     </td>
                     <td className="px-3 py-2">
                       <input name="refNo" value={editForm.refNo} onChange={handleEditChange}
-                             placeholder="UTR/NEFT/…" className="w-full border rounded px-2 py-1"/>
+                             placeholder="UTR/NEFT/…" className="w-full border rounded-lg px-2 py-1"/>
                     </td>
                     <td className="px-3 py-2 text-right">
                       <input type="number" step="0.01" name="amount" value={editForm.amount} onChange={handleEditChange}
-                             className="w-full border rounded px-2 py-1 text-right"/>
+                             className="w-full border rounded-lg px-2 py-1 text-right"/>
                     </td>
                     <td className="px-3 py-2">
                       <input name="remarks" value={editForm.remarks} onChange={handleEditChange}
-                             className="w-full border rounded px-2 py-1"/>
-                    </td>
-                    <td className="px-3 py-2">
-                      <input name="mgr" value={editForm.mgr} onChange={handleEditChange} placeholder="Manager"
-                             className="w-full border rounded px-2 py-1"/>
+                             className="w-full border rounded-lg px-2 py-1"/>
                     </td>
                     <td className="px-3 py-2">
                       <select name="status" value={editForm.status} onChange={handleEditChange}
-                              className="w-full border rounded px-2 py-1">
+                              className="w-full border rounded-lg px-2 py-1">
                         {STATUSES.filter(s => s.value !== 'DELETED').map(s => (
                           <option key={s.value} value={s.value}>{s.label}</option>
                         ))}
@@ -502,10 +530,10 @@ export default function PayRecManagement() {
                     </td>
                     <td className="px-3 py-2 text-sm">{fmtDateTime(r.createdAt)}</td>
                     <td className="px-3 py-2 flex justify-center gap-2">
-                      <button onClick={submitEdit} disabled={editLoading} className="p-2 hover:bg-gray-100 rounded" title="Save">
+                      <button onClick={submitEdit} disabled={editLoading} className="p-2 hover:bg-slate-100 rounded-lg" title="Save">
                         <SaveIcon size={16}/>
                       </button>
-                      <button onClick={cancelEdit} disabled={editLoading} className="p-2 hover:bg-gray-100 rounded" title="Cancel">
+                      <button onClick={cancelEdit} disabled={editLoading} className="p-2 hover:bg-slate-100 rounded-lg" title="Cancel">
                         <XIcon size={16}/>
                       </button>
                     </td>
@@ -518,13 +546,13 @@ export default function PayRecManagement() {
                     <td className="px-3 py-2 text-sm">
                       <div className="leading-tight">
                         <div className="font-mono">{r.partyCode}</div>
-                        <div className="text-gray-500">{r.partyName || '–'}</div>
+                        <div className="text-slate-500">{r.partyName || '–'}</div>
                       </div>
                     </td>
                     <td className="px-3 py-2 text-sm">
                       <div className="leading-tight">
                         <div className="font-mono">{r.forPartyCode || '–'}</div>
-                        <div className="text-gray-500">{r.forPartyName || '–'}</div>
+                        <div className="text-slate-500">{r.forPartyName || '–'}</div>
                       </div>
                     </td>
                     <td className="px-3 py-2 text-sm">{MODES.find(m=>m.value===r.mode)?.label || r.mode}</td>
@@ -533,29 +561,30 @@ export default function PayRecManagement() {
                       {r.amount?.toLocaleString(undefined,{minimumFractionDigits:2, maximumFractionDigits:2}) ?? '0.00'}
                     </td>
                     <td className="px-3 py-2 text-sm">{r.remarks || '–'}</td>
-                    <td className="px-3 py-2 text-sm">{r.mgr || '–'}</td> {/* show Mgr */}
-                    <td className="px-3 py-2 text-sm">{r.status}</td>
+                    <td className="px-3 py-2 text-sm"><StatusPill value={r.status} /></td>
                     <td className="px-3 py-2 text-sm">{fmtDateTime(r.createdAt)}</td>
-                    <td className="px-3 py-2 flex justify-center gap-2">
-                      {r.status !== 'DELETED' ? (
-                        <>
-                          <button onClick={()=> startEdit(r)} className="p-2 hover:bg-gray-100 rounded" title="Edit">
-                            <Edit2Icon size={16}/>
+                    <td className="px-3 py-2">
+                      <div className="flex items-center justify-center gap-2">
+                        {r.status !== 'DELETED' ? (
+                          <>
+                            <button onClick={()=> startEdit(r)} className="p-2 hover:bg-slate-100 rounded-lg" title="Edit">
+                              <Edit2Icon size={16}/>
+                            </button>
+                            <button onClick={()=> handleStatus(r._id, r.status === 'ACTIVE' ? 'POSTED' : 'ACTIVE')}
+                                    className="p-2 hover:bg-slate-100 rounded-lg"
+                                    title={r.status === 'ACTIVE' ? 'Mark Posted' : 'Mark Active'}>
+                              <BadgeCheckIcon size={16}/>
+                            </button>
+                            <button onClick={()=> handleDelete(r._id)} className="p-2 hover:bg-red-100 rounded-lg" title="Soft Delete">
+                              <Trash2Icon size={16}/>
+                            </button>
+                          </>
+                        ) : (
+                          <button onClick={()=> handleRestore(r._id)} className="p-2 hover:bg-slate-100 rounded-lg" title="Restore">
+                            <RotateCcwIcon size={16}/>
                           </button>
-                          <button onClick={()=> handleStatus(r._id, r.status === 'ACTIVE' ? 'POSTED' : 'ACTIVE')}
-                                  className="p-2 hover:bg-gray-100 rounded"
-                                  title={r.status === 'ACTIVE' ? 'Mark Posted' : 'Mark Active'}>
-                            <BadgeCheckIcon size={16}/>
-                          </button>
-                          <button onClick={()=> handleDelete(r._id)} className="p-2 hover:bg-red-100 rounded" title="Soft Delete">
-                            <Trash2Icon size={16}/>
-                          </button>
-                        </>
-                      ) : (
-                        <button onClick={()=> handleRestore(r._id)} className="p-2 hover:bg-gray-100 rounded" title="Restore">
-                          <RotateCcwIcon size={16}/>
-                        </button>
-                      )}
+                        )}
+                      </div>
                     </td>
                   </>
                 )}
@@ -563,7 +592,7 @@ export default function PayRecManagement() {
             ))}
             {!view.length && (
               <tr>
-                <td colSpan="13" className="px-4 py-6 text-center text-sm text-gray-500">
+                <td colSpan="12" className="px-4 py-6 text-center text-sm text-slate-500">
                   No entries found.
                 </td>
               </tr>

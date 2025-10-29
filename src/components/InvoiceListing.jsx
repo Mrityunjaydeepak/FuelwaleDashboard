@@ -211,7 +211,7 @@ export default function InvoiceListings() {
   return (
     <div className="p-6 bg-gray-50 min-h-screen">
       <div className="flex items-center gap-3 mb-4">
-        <h2 className="text-2xl font-semibold">Invoice Listings</h2>
+        <h2 className="text-2xl font-semibold">Voucher Listings</h2>
         <button
           onClick={fetchAll}
           className="ml-auto inline-flex items-center gap-2 border px-3 py-2 rounded bg-white hover:bg-gray-50"

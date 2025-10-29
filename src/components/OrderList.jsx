@@ -1,3 +1,4 @@
+// src/components/OrdersList.jsx
 import React, { useState, useEffect, useMemo } from 'react';
 import api from '../api';
 import { Edit3, Save, XCircle, Search, Trash2, RefreshCcw } from 'lucide-react';
@@ -51,9 +52,9 @@ export default function OrdersList() {
   const [editForm, setEditForm]         = useState({});
   const [lastUpdatedOrder, setLastUpdatedOrder] = useState(null);
 
-  // NEW: reference data for vehicles & drivers so we can show the driver tied to a vehicle
-  const [vehicles, setVehicles] = useState([]);                 // raw list from /vehicles
-  const [drivers, setDrivers]   = useState([]);                 // raw list from /drivers
+  // Reference data (still fetched; we just hide Driver in the table)
+  const [vehicles, setVehicles] = useState([]);
+  const [drivers, setDrivers]   = useState([]);
   const vehicleById   = useMemo(() => {
     const m = {};
     for (const v of vehicles || []) m[String(v._id)] = v;
@@ -94,8 +95,7 @@ export default function OrdersList() {
         const meta = deriveProductMeta(first.productName);
         const orderNo = (typeof o.orderNo === 'string' && o.orderNo) ? o.orderNo : (o._id || '').slice(-6);
 
-        // --- VEHICLE LOOKUP ---
-        // from order first; if missing, try to resolve vehicle by number from the vehicles list
+        // VEHICLE resolution
         const vehicleIdFromOrder =
           (typeof o.vehicle === 'string' && o.vehicle) ? o.vehicle :
           (o.vehicle?._id || null);
@@ -109,8 +109,7 @@ export default function OrdersList() {
         const vehicleRegNo = vehicleNoFromOrder || vDoc?.vehicleNo || '';
         const vehicleId    = vehicleIdFromOrder || vDoc?._id || null;
 
-        // --- DRIVER LOOKUP ---
-        // priority: order.driver (object) → vehicle.driver (object or id) → map id to name via /drivers
+        // DRIVER resolution (kept for internal logic; not shown in table)
         const driverObjFromOrder =
           (o.driver && typeof o.driver === 'object' ? o.driver : null) ||
           (o.vehicle?.driver && typeof o.vehicle.driver === 'object' ? o.vehicle.driver : null);
@@ -175,12 +174,11 @@ export default function OrdersList() {
     if (search.trim()) {
       const s = search.trim().toLowerCase();
       temp = temp.filter(o =>
-        (o.orderNo && String(o.orderNo).includes(search)) ||
+        (o.orderNo && String(o.orderNo).toLowerCase().includes(s)) ||
         (o.custName && o.custName.toLowerCase().includes(s)) ||
         (o.custId && String(o.custId).toLowerCase().includes(s)) ||
-        (o.userName && String(o.userName).toLowerCase().includes(s)) ||
-        (o.driverName && o.driverName.toLowerCase().includes(s)) ||
-        (o.vehicleRegNo && o.vehicleRegNo.toLowerCase().includes(s))
+        (o.vehicleRegNo && o.vehicleRegNo.toLowerCase().includes(s)) ||
+        (o.pdtName && o.pdtName.toLowerCase().includes(s))
       );
     }
     if (from) temp = temp.filter(o => new Date(o.dateDely || o.createdAt) >= new Date(from));
@@ -228,12 +226,11 @@ export default function OrdersList() {
       const res = await api.put(`/orders/${id}`, payload);
       const updated = res.data;
 
-      // re-map just this row
+      // remap row
       const itemsArr = Array.isArray(updated.items) ? updated.items : [];
       const first = itemsArr[0] || {};
       const meta = deriveProductMeta(first.productName);
 
-      // resolve vehicle + driver again after update
       const vId  = (typeof updated.vehicle === 'string' ? updated.vehicle : updated.vehicle?._id) || null;
       const vDoc = (vId && vehicleById[vId]) || null;
       const vNo  = updated.vehicleRegNo || updated.vehicle?.vehicleNo || vDoc?.vehicleNo || '';
@@ -292,13 +289,23 @@ export default function OrdersList() {
     }
   };
 
+  // pretty status chip (keeps your palette)
+  const statusChipClass = (s) => {
+    switch (s) {
+      case 'COMPLETED': return 'bg-emerald-100 text-emerald-800 border-emerald-200';
+      case 'PARTIALLY_COMPLETED': return 'bg-amber-100 text-amber-800 border-amber-200';
+      case 'CANCELLED': return 'bg-rose-100 text-rose-800 border-rose-200';
+      default: return 'bg-orange-100 text-orange-800 border-orange-200'; // PENDING
+    }
+  };
+
   return (
     <div className="p-6 bg-gray-50 min-h-screen">
       <div className="flex items-center justify-between mb-4">
         <h2 className="text-2xl font-semibold">Orders Dashboard</h2>
         <button
           onClick={fetchAll}
-          className="inline-flex items-center gap-2 border px-3 py-2 rounded bg-white"
+          className="inline-flex items-center gap-2 border px-3 py-2 rounded bg-white hover:bg-gray-50"
           title="Refresh"
         >
           <RefreshCcw size={16} /> Refresh
@@ -307,18 +314,18 @@ export default function OrdersList() {
 
       {/* Filters */}
       <div className="flex flex-col sm:flex-row gap-4 mb-4">
-        <div className="flex items-center border rounded px-2 bg-white">
+        <div className="flex items-center border rounded px-2 bg-white shadow-sm">
           <Search size={16} />
           <input
-            placeholder="Search Order / User / Cust / Vehicle / Driver"
+            placeholder="Search Order / Cust / Vehicle / Product"
             value={search}
             onChange={e => setSearch(e.target.value)}
             className="px-2 py-1 outline-none"
           />
         </div>
         <div className="flex gap-2">
-          <input type="date" value={from} onChange={e => setFrom(e.target.value)} className="border rounded px-2 py-1 bg-white" />
-          <input type="date" value={to}   onChange={e => setTo(e.target.value)}   className="border rounded px-2 py-1 bg-white" />
+          <input type="date" value={from} onChange={e => setFrom(e.target.value)} className="border rounded px-2 py-1 bg-white shadow-sm" />
+          <input type="date" value={to}   onChange={e => setTo(e.target.value)}   className="border rounded px-2 py-1 bg-white shadow-sm" />
         </div>
       </div>
 
@@ -327,50 +334,59 @@ export default function OrdersList() {
       ) : (
         <>
           {/* Table */}
-          <div className="overflow-x-auto">
-            <table className="min-w-full bg-white shadow rounded">
-              <thead>
-                <tr className="bg-[#f3c7a2]">
-                  <th className="px-3 py-2 text-left">OrderNo</th>
-                  <th className="px-3 py-2 text-left">UserName</th>
-                  <th className="px-3 py-2 text-left">Cust Id</th>
-                  <th className="px-3 py-2 text-left">CustName</th>
-                  <th className="px-3 py-2 text-left">ShipToLoc</th>
-                  <th className="px-3 py-2 text-left">Pdt_Code</th>
-                  <th className="px-3 py-2 text-left">Pdt_Name</th>
-                  <th className="px-3 py-2 text-right">PdtQty</th>
-                  <th className="px-3 py-2 text-left">UoM</th>
-                  <th className="px-3 py-2 text-right">PdtRate</th>
-                  <th className="px-3 py-2 text-left">Date_Dely</th>
-                  <th className="px-3 py-2 text-left">Time Slot</th>
-                  <th className="px-3 py-2 text-left">Vehicle Allotted</th>
-                  <th className="px-3 py-2 text-left">Driver Allotted</th>
-                  <th className="px-3 py-2 text-center">Modify</th>
+          <div className="overflow-x-auto rounded-xl shadow ring-1 ring-black/5 bg-white">
+            <table className="min-w-full border-collapse">
+              <thead className="sticky top-0 z-10">
+                <tr className="bg-[#f3c7a2] text-slate-900/90">
+                  <th className="px-3 py-3 text-left text-xs font-semibold uppercase tracking-wide">OrderNo / Status</th>
+                  {/* REMOVED UserName */}
+                  <th className="px-3 py-3 text-left text-xs font-semibold uppercase tracking-wide">Cust Id</th>
+                  <th className="px-3 py-3 text-left text-xs font-semibold uppercase tracking-wide">CustName</th>
+                  <th className="px-3 py-3 text-left text-xs font-semibold uppercase tracking-wide">ShipToLoc</th>
+                  <th className="px-3 py-3 text-left text-xs font-semibold uppercase tracking-wide">Pdt_Code</th>
+                  <th className="px-3 py-3 text-left text-xs font-semibold uppercase tracking-wide">Pdt_Name</th>
+                  <th className="px-3 py-3 text-right text-xs font-semibold uppercase tracking-wide">PdtQty</th>
+                  <th className="px-3 py-3 text-left text-xs font-semibold uppercase tracking-wide">UoM</th>
+                  <th className="px-3 py-3 text-right text-xs font-semibold uppercase tracking-wide">PdtRate</th>
+                  <th className="px-3 py-3 text-left text-xs font-semibold uppercase tracking-wide">Date_Dely</th>
+                  <th className="px-3 py-3 text-left text-xs font-semibold uppercase tracking-wide">Time Slot</th>
+                  <th className="px-3 py-3 text-left text-xs font-semibold uppercase tracking-wide">Vehicle Allotted</th>
+                  {/* REMOVED Driver Allotted */}
+                  <th className="px-3 py-3 text-center text-xs font-semibold uppercase tracking-wide">Modify</th>
                 </tr>
               </thead>
-              <tbody>
+              <tbody className="divide-y divide-orange-100">
                 {filtered.map(row => {
                   const isEditing = editingId === row._id;
                   const vehicleLast4 = row.vehicleRegNo ? row.vehicleRegNo.slice(-4) : '';
 
                   return (
-                    <tr key={row._id} className="hover:bg-gray-50 align-top">
-                      <td className="border px-3 py-2 font-mono">{row.orderNo || '—'}</td>
-                      <td className="border px-3 py-2">{row.userName || '—'}</td>
-                      <td className="border px-3 py-2">{row.custId || '—'}</td>
-                      <td className="border px-3 py-2">{row.custName || '—'}</td>
-                      <td className="border px-3 py-2">
+                    <tr key={row._id} className="odd:bg-white even:bg-orange-50/40 hover:bg-orange-100/40 transition-colors">
+                      <td className="px-3 py-3 align-top">
+                        <div className="font-mono text-[13px]">{row.orderNo || '—'}</div>
+                        <div className={`inline-flex mt-1 px-2 py-0.5 text-[11px] border rounded-full ${statusChipClass(row.orderStatus)}`}>
+                          {row.orderStatus?.replace(/_/g,' ') || 'PENDING'}
+                        </div>
+                      </td>
+
+                      {/* UserName column removed */}
+
+                      <td className="px-3 py-3 align-top">{row.custId || '—'}</td>
+                      <td className="px-3 py-3 align-top">{row.custName || '—'}</td>
+                      <td className="px-3 py-3 align-top">
                         {isEditing ? (
                           <input
                             className="border rounded px-2 py-1 w-56"
                             value={editForm.shipToLoc}
                             onChange={e => onChangeEdit('shipToLoc', e.target.value)}
                           />
-                        ) : (row.shipToLoc || '—')}
+                        ) : (
+                          <span className="line-clamp-3">{row.shipToLoc || '—'}</span>
+                        )}
                       </td>
-                      <td className="border px-3 py-2">{row.pdtCode || '—'}</td>
-                      <td className="border px-3 py-2">{row.pdtName || '—'}</td>
-                      <td className="border px-3 py-2 text-right">
+                      <td className="px-3 py-3 align-top">{row.pdtCode || '—'}</td>
+                      <td className="px-3 py-3 align-top">{row.pdtName || '—'}</td>
+                      <td className="px-3 py-3 text-right align-top">
                         {isEditing ? (
                           <input
                             type="number"
@@ -380,8 +396,8 @@ export default function OrdersList() {
                           />
                         ) : row.pdtQty}
                       </td>
-                      <td className="border px-3 py-2">{row.uom || 'L'}</td>
-                      <td className="border px-3 py-2 text-right">
+                      <td className="px-3 py-3 align-top">{row.uom || 'L'}</td>
+                      <td className="px-3 py-3 text-right align-top">
                         {isEditing ? (
                           <input
                             type="number"
@@ -391,35 +407,33 @@ export default function OrdersList() {
                           />
                         ) : row.pdtRate}
                       </td>
-                      <td className="border px-3 py-2">{ddmmyyyy(row.dateDely)}</td>
-                      <td className="border px-3 py-2">{row.timeSlot || '—'}</td>
+                      <td className="px-3 py-3 align-top">{ddmmyyyy(row.dateDely)}</td>
+                      <td className="px-3 py-3 align-top">{row.timeSlot || '—'}</td>
 
-                      {/* Vehicle Allotted (green last4 style) */}
-                      <td className="border px-3 py-2">
+                      {/* Vehicle Allotted */}
+                      <td className="px-3 py-3 align-top">
                         {row.vehicleRegNo ? (
-                          <span className="px-2 py-1 rounded bg-green-200 font-mono">{vehicleLast4}</span>
+                          <span className="px-2 py-1 rounded bg-green-200/80 text-green-900 font-mono text-xs border border-green-300">
+                            {vehicleLast4}
+                          </span>
                         ) : '—'}
                       </td>
 
-                      {/* Driver Allotted (read-only from resolved vehicle/order) */}
-                      <td className="border px-3 py-2">
-                        {row.driverName || '—'}
-                      </td>
+                      {/* Driver column removed */}
 
-                      {/* Modify (Update / Delete) */}
-                      <td className="border px-3 py-2 text-center">
+                      <td className="px-3 py-3 align-top text-center">
                         {!isEditing ? (
                           <div className="flex items-center justify-center gap-2">
                             <button
                               onClick={() => startEdit(row)}
-                              className="text-blue-600 hover:text-blue-800 flex items-center gap-1"
+                              className="text-blue-700 hover:text-blue-900 inline-flex items-center gap-1"
                               title="Update"
                             >
                               <Edit3 size={16} /> Update
                             </button>
                             <button
                               onClick={() => handleDelete(row._id)}
-                              className="text-red-600 hover:text-red-800 flex items-center gap-1"
+                              className="text-rose-700 hover:text-rose-900 inline-flex items-center gap-1"
                               title="Delete Order"
                             >
                               <Trash2 size={16} /> Delete
@@ -429,14 +443,14 @@ export default function OrdersList() {
                           <div className="flex items-center justify-center gap-2">
                             <button
                               onClick={() => saveEdit(row._id)}
-                              className="text-green-600 hover:text-green-800 flex items-center gap-1"
+                              className="text-emerald-700 hover:text-emerald-900 inline-flex items-center gap-1"
                               title="Save"
                             >
                               <Save size={16} /> Save
                             </button>
                             <button
                               onClick={cancelEdit}
-                              className="text-gray-600 hover:text-gray-800 flex items-center gap-1"
+                              className="text-gray-700 hover:text-gray-900 inline-flex items-center gap-1"
                               title="Cancel"
                             >
                               <XCircle size={16} /> Cancel
@@ -449,7 +463,8 @@ export default function OrdersList() {
                 })}
                 {filtered.length === 0 && (
                   <tr>
-                    <td colSpan={16} className="px-4 py-6 text-center text-gray-500">
+                    {/* 13 visible columns now */}
+                    <td colSpan={13} className="px-4 py-6 text-center text-gray-500">
                       No orders found.
                     </td>
                   </tr>
@@ -458,7 +473,7 @@ export default function OrdersList() {
             </table>
           </div>
 
-          {/* Optional: show the last updated order payload for debugging */}
+          {/* Optional: last updated order debug panel */}
           {lastUpdatedOrder && (
             <div className="mt-6 bg-[#ffecb3] border border-yellow-200 shadow rounded p-4">
               <div className="flex items-center justify-between">

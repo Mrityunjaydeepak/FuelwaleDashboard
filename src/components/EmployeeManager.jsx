@@ -1,3 +1,4 @@
+// src/pages/EmployeeManagement.jsx
 import React, { useState, useEffect } from 'react';
 import api from '../api';
 import {
@@ -9,16 +10,16 @@ import {
   XIcon
 } from 'lucide-react';
 
-const ROLE_OPTIONS = ['admin', 'trip', 'vehicle', 'accounts', 'customer'];
+// Removed "customer"
+const ROLE_OPTIONS = ['admin', 'trip', 'vehicle', 'accounts'];
 
 export default function EmployeeManagement() {
   const initialForm = {
-    empCd:       '',
-    empName:     '',
-    depot:       '',
-    accessLevel: '',
-    roles:       [],    // NEW
-    password:    ''     // NEW (required on create)
+    empCd:    '',
+    empName:  '',
+    depot:    '',
+    roles:    [],   // keep roles (without "customer")
+    password: ''    // required on create
   };
 
   const [form, setForm]               = useState(initialForm);
@@ -49,7 +50,6 @@ export default function EmployeeManagement() {
     const { name, value, type, checked } = e.target;
     setError('');
 
-    // roles via checkbox group
     if (name === 'roles') {
       setForm(f => {
         const set = new Set(f.roles || []);
@@ -66,7 +66,6 @@ export default function EmployeeManagement() {
     e.preventDefault();
     setLoading(true);
     try {
-      // Password required on create
       if (!form.password || form.password.trim().length < 6) {
         setError('Password is required (min 6 characters).');
         setLoading(false);
@@ -74,12 +73,11 @@ export default function EmployeeManagement() {
       }
 
       await api.post('/employees', {
-        empCd:       form.empCd,
-        empName:     form.empName,
-        depot:       form.depot || null,
-        accessLevel: form.accessLevel === '' ? '' : Number(form.accessLevel),
-        roles:       form.roles && form.roles.length ? form.roles : undefined,
-        password:    form.password
+        empCd:    form.empCd,
+        empName:  form.empName,
+        depot:    form.depot || null,
+        roles:    form.roles && form.roles.length ? form.roles : undefined,
+        password: form.password
       });
 
       const res = await api.get('/employees');
@@ -96,12 +94,11 @@ export default function EmployeeManagement() {
   const startEdit = emp => {
     setEditingId(emp._id);
     setEditForm({
-      empCd:       emp.empCd || '',
-      empName:     emp.empName || '',
-      depot:       emp.depotCd?._id || '',
-      accessLevel: emp.accessLevel ?? '',
-      roles:       Array.isArray(emp.roles) ? emp.roles : [],
-      password:    '' // optional on edit
+      empCd:    emp.empCd || '',
+      empName:  emp.empName || '',
+      depot:    emp.depotCd?._id || '',
+      roles:    Array.isArray(emp.roles) ? emp.roles : [],
+      password: '' // optional on edit
     });
     setError('');
   };
@@ -132,13 +129,12 @@ export default function EmployeeManagement() {
     setEditLoading(true);
     try {
       const payload = {
-        empCd:       editForm.empCd,
-        empName:     editForm.empName,
-        depot:       editForm.depot || null,
-        accessLevel: editForm.accessLevel === '' ? '' : Number(editForm.accessLevel),
-        roles:       editForm.roles && editForm.roles.length ? editForm.roles : []
+        empCd:   editForm.empCd,
+        empName: editForm.empName,
+        depot:   editForm.depot || null,
+        roles:   editForm.roles && editForm.roles.length ? editForm.roles : []
       };
-      // Only send password if user typed a new one
+
       if (editForm.password && editForm.password.trim().length >= 6) {
         payload.password = editForm.password;
       } else if (editForm.password && editForm.password.trim().length > 0) {
@@ -154,6 +150,17 @@ export default function EmployeeManagement() {
       setError(err.response?.data?.error || 'Failed to update employee');
     } finally {
       setEditLoading(false);
+    }
+  };
+
+  // ---------- DELETE ----------
+  const handleDelete = async (id) => {
+    if (!confirm('Delete this employee?')) return;
+    try {
+      await api.delete(`/employees/${id}`);
+      setEmployees(es => es.filter(e => e._id !== id));
+    } catch (err) {
+      setError(err.response?.data?.error || 'Failed to delete employee');
     }
   };
 
@@ -204,17 +211,7 @@ export default function EmployeeManagement() {
             ))}
           </select>
 
-          <input
-            name="accessLevel"
-            type="number"
-            placeholder="Access Level"
-            value={editingId ? editForm.accessLevel : form.accessLevel}
-            onChange={editingId ? handleEditChange : handleChange}
-            required
-            className="border rounded px-3 py-2"
-          />
-
-          {/* Roles (checkbox group) */}
+          {/* Roles (checkbox group) — without "customer" */}
           <div className="md:col-span-2 lg:col-span-4">
             <label className="block text-sm font-medium mb-2">Roles</label>
             <div className="flex flex-wrap gap-3">
@@ -247,7 +244,7 @@ export default function EmployeeManagement() {
               value={editingId ? editForm.password : form.password}
               onChange={editingId ? handleEditChange : handleChange}
               className="border rounded px-3 py-2 w-full"
-              required={!editingId} // required only on create
+              required={!editingId}
             />
           </div>
 
@@ -292,7 +289,7 @@ export default function EmployeeManagement() {
         <table className="min-w-full divide-y divide-gray-200">
           <thead className="sticky top-0 bg-gray-100">
             <tr>
-              {['#','Code','Name','Depot','Access','Roles','Created','Actions'].map((h,i) => (
+              {['#','Code','Name','Depot','Roles','Created','Actions'].map((h,i) => (
                 <th key={i} className="px-2 py-2 text-left text-sm font-semibold">
                   {h}
                 </th>
@@ -306,7 +303,7 @@ export default function EmployeeManagement() {
                 className={`${i % 2 === 0 ? 'bg-white' : 'bg-gray-50'} hover:bg-gray-100`}
               >
                 {editingId === e._id ? (
-                  <td colSpan="8" className="px-2 py-4 text-center text-sm">
+                  <td colSpan="7" className="px-2 py-4 text-center text-sm">
                     Editing…
                   </td>
                 ) : (
@@ -315,7 +312,6 @@ export default function EmployeeManagement() {
                     <td className="px-2 py-2 text-sm">{e.empCd}</td>
                     <td className="px-2 py-2 text-sm">{e.empName}</td>
                     <td className="px-2 py-2 text-sm">{e.depotCd?.depotCd || '–'}</td>
-                    <td className="px-2 py-2 text-sm">{e.accessLevel}</td>
                     <td className="px-2 py-2 text-sm">
                       {Array.isArray(e.roles) && e.roles.length ? e.roles.join(', ') : '–'}
                     </td>
@@ -334,7 +330,7 @@ export default function EmployeeManagement() {
             ))}
             {!filtered.length && (
               <tr>
-                <td colSpan="8" className="px-2 py-4 text-center text-sm text-gray-500">
+                <td colSpan="7" className="px-2 py-4 text-center text-sm text-gray-500">
                   No employees found.
                 </td>
               </tr>

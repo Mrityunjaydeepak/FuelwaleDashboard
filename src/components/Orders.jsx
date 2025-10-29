@@ -1,7 +1,7 @@
 // src/components/ManageOrders.jsx
 import React, { useState, useEffect, useMemo } from 'react';
 import api from '../api';
-import { ShoppingCart, PlusIcon } from 'lucide-react';
+import { ShoppingCart, PlusIcon, Trash2, X, CheckCircle2 } from 'lucide-react';
 
 export default function ManageOrders() {
   const initialForm = {
@@ -19,6 +19,10 @@ export default function ManageOrders() {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
 
+  // confirmation modal
+  const [showConfirm, setShowConfirm] = useState(false);
+  const [pendingPayload, setPendingPayload] = useState(null);
+
   // Which address (Address 1 / Address 2) is selected in the dropdown
   const [shipToChoice, setShipToChoice] = useState(''); // 'shipTo1' | 'shipTo2' | ''
 
@@ -28,7 +32,6 @@ export default function ManageOrders() {
   );
 
   // Build Address 1 / Address 2 options from selectedCustomer.shipTo
-  // We only get full strings, so we label by index.
   const shipToOptions = useMemo(() => {
     if (!selectedCustomer || !Array.isArray(selectedCustomer.shipTo)) return [];
     return selectedCustomer.shipTo.map((addr, idx) => {
@@ -91,30 +94,70 @@ export default function ManageOrders() {
     }));
   };
 
+  const removeItem = (idx) => {
+    setForm(f => {
+      if (f.items.length === 1) return f; // keep at least one
+      const items = f.items.filter((_, i) => i !== idx);
+      return { ...f, items };
+    });
+  };
+
+  // Build payload + open confirmation
   const handleSubmit = async e => {
     e.preventDefault();
-    setLoading(true);
     setError('');
 
-    const deliveryTimeSlot = `${form.deliveryTimeStart} - ${form.deliveryTimeEnd}`;
+    // Basic validation
+    if (!form.deliveryDate) {
+      setError('Please select a delivery date.');
+      return;
+    }
+    if (!form.deliveryTimeStart || !form.deliveryTimeEnd) {
+      setError('Please select a delivery time range.');
+      return;
+    }
+    if (form.deliveryTimeEnd <= form.deliveryTimeStart) {
+      setError('Time To must be later than Time From.');
+      return;
+    }
 
+    const cleanedItems = form.items
+      .map(i => ({
+        productName: (i.productName || '').trim() || 'diesel',
+        quantity: Number(i.quantity),
+        rate: Number(i.rate)
+      }))
+      .filter(i => i.quantity > 0 && i.rate >= 0);
+
+    if (cleanedItems.length === 0) {
+      setError('Please add at least one item with a quantity > 0.');
+      return;
+    }
+
+    const deliveryTimeSlot = `${form.deliveryTimeStart} - ${form.deliveryTimeEnd}`;
     const payload = {
       customerId: form.customerId,
       shipToAddress: form.shipToAddress,
       orderType: form.orderType,
-      items: form.items.map(i => ({
-        productName: i.productName,
-        quantity: Number(i.quantity),
-        rate: Number(i.rate)
-      })),
+      items: cleanedItems,
       deliveryDate: form.deliveryDate,
       deliveryTimeSlot
     };
 
+    setPendingPayload(payload);
+    setShowConfirm(true); // open confirmation modal
+  };
+
+  const confirmAndPost = async () => {
+    if (!pendingPayload) return;
+    setLoading(true);
     try {
-      await api.post('/orders', payload);
+      await api.post('/orders', pendingPayload);
+      // reset
       setForm(initialForm);
       setShipToChoice('');
+      setPendingPayload(null);
+      setShowConfirm(false);
     } catch (err) {
       setError(err.response?.data?.error || 'Failed to create order');
     } finally {
@@ -133,6 +176,15 @@ export default function ManageOrders() {
     const opt = shipToOptions.find(o => o.key === key);
     setForm(f => ({ ...f, shipToAddress: opt ? opt.value : '' }));
   };
+
+  // Simple total (optional UI cue)
+  const orderTotal = useMemo(() => {
+    return form.items.reduce((sum, it) => {
+      const q = Number(it.quantity || 0);
+      const r = Number(it.rate || 0);
+      return sum + (isFinite(q) && isFinite(r) ? q * r : 0);
+    }, 0);
+  }, [form.items]);
 
   return (
     <div className="p-6 bg-gray-50 min-h-screen">
@@ -186,7 +238,7 @@ export default function ManageOrders() {
               )}
             </select>
 
-            {/* Little header info box for the selected customer */}
+            {/* Selected customer info */}
             {selectedCustomer && (
               <div className="mt-2 p-2 bg-gray-50 rounded text-sm">
                 <div><strong>Code:</strong> {selectedCustomer.custCd}</div>
@@ -196,7 +248,7 @@ export default function ManageOrders() {
             )}
           </div>
 
-          {/* Ship-To selector: Dropdown for Address 1 / Address 2; if none, fallback to free text */}
+          {/* Ship-To selector */}
           <div>
             <label className="block text-sm mb-1">Ship To Address</label>
 
@@ -212,7 +264,6 @@ export default function ManageOrders() {
                   ))}
                 </select>
 
-                {/* Show the full address string read-only so user knows exactly what's going */}
                 <textarea
                   readOnly
                   value={form.shipToAddress}
@@ -248,38 +299,49 @@ export default function ManageOrders() {
           </div>
 
           {/* Items */}
-          {form.items.map((item, idx) => (
-            <div key={idx} className="flex space-x-2 items-center">
-              <input
-                name="productName"
-                value={item.productName}
-                onChange={e => handleItemChange(idx, e)}
-                placeholder="Product"
-                className="w-1/3 border rounded px-2 py-1"
-              />
-              <input
-                name="quantity"
-                type="number"
-                min="0"
-                value={item.quantity}
-                onChange={e => handleItemChange(idx, e)}
-                placeholder="Qty"
-                required
-                className="w-1/3 border rounded px-2 py-1"
-              />
-              <input
-                name="rate"
-                type="number"
-                step="0.01"
-                min="0"
-                value={item.rate}
-                onChange={e => handleItemChange(idx, e)}
-                placeholder="Rate"
-                required
-                className="w-1/3 border rounded px-2 py-1"
-              />
-            </div>
-          ))}
+          <div className="space-y-2">
+            {form.items.map((item, idx) => (
+              <div key={idx} className="flex items-center gap-2">
+                <input
+                  name="productName"
+                  value={item.productName}
+                  onChange={e => handleItemChange(idx, e)}
+                  placeholder="Product"
+                  className="flex-1 border rounded px-2 py-1"
+                />
+                <input
+                  name="quantity"
+                  type="number"
+                  min="0"
+                  value={item.quantity}
+                  onChange={e => handleItemChange(idx, e)}
+                  placeholder="Qty"
+                  required
+                  className="w-24 border rounded px-2 py-1 text-right"
+                />
+                <input
+                  name="rate"
+                  type="number"
+                  step="0.01"
+                  min="0"
+                  value={item.rate}
+                  onChange={e => handleItemChange(idx, e)}
+                  placeholder="Rate"
+                  required
+                  className="w-28 border rounded px-2 py-1 text-right"
+                />
+                <button
+                  type="button"
+                  onClick={() => removeItem(idx)}
+                  title="Remove item"
+                  className="p-2 rounded border hover:bg-gray-50 disabled:opacity-40"
+                  disabled={form.items.length === 1}
+                >
+                  <Trash2 size={16} />
+                </button>
+              </div>
+            ))}
+          </div>
 
           <button
             type="button"
@@ -327,6 +389,12 @@ export default function ManageOrders() {
             </div>
           </div>
 
+          {/* Quick total (optional visual) */}
+          <div className="text-right text-sm text-gray-600">
+            <span className="font-medium">Approx. Total: </span>
+            ₹{orderTotal.toLocaleString('en-IN', { maximumFractionDigits: 2 })}
+          </div>
+
           <button
             type="submit"
             disabled={loading}
@@ -336,6 +404,51 @@ export default function ManageOrders() {
           </button>
         </form>
       </div>
+
+      {/* Confirmation Modal */}
+      {showConfirm && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center">
+          <div className="absolute inset-0 bg-black/40" onClick={() => !loading && setShowConfirm(false)} />
+          <div className="relative z-10 w-[92%] max-w-md bg-white rounded-lg shadow-lg overflow-hidden">
+            <div className="px-5 py-4 border-b flex items-center gap-2">
+              <CheckCircle2 size={20} className="text-emerald-600" />
+              <h4 className="text-lg font-semibold">Confirm Order</h4>
+            </div>
+            <div className="px-5 py-4 text-sm space-y-2">
+              <p>Are you sure you want to create this order?</p>
+              {pendingPayload && (
+                <div className="bg-gray-50 border rounded p-3 space-y-1">
+                  <div><span className="font-medium">Customer:</span> {selectedCustomer?.custCd} — {selectedCustomer?.custName}</div>
+                  <div><span className="font-medium">Type:</span> {pendingPayload.orderType}</div>
+                  <div><span className="font-medium">Delivery:</span> {pendingPayload.deliveryDate} ({pendingPayload.deliveryTimeSlot})</div>
+                  <div className="font-medium">Items:</div>
+                  <ul className="list-disc pl-5">
+                    {pendingPayload.items.map((it, i) => (
+                      <li key={i}>{it.productName} — {it.quantity} × ₹{it.rate}</li>
+                    ))}
+                  </ul>
+                </div>
+              )}
+            </div>
+            <div className="px-5 py-4 border-t flex items-center justify-end gap-2">
+              <button
+                onClick={() => setShowConfirm(false)}
+                disabled={loading}
+                className="px-4 py-2 rounded bg-gray-200 hover:bg-gray-300 disabled:opacity-50"
+              >
+                <span className="inline-flex items-center gap-1"><X size={16}/> Cancel</span>
+              </button>
+              <button
+                onClick={confirmAndPost}
+                disabled={loading}
+                className="px-4 py-2 rounded bg-green-600 text-white hover:bg-green-700 disabled:opacity-50"
+              >
+                {loading ? 'Submitting…' : 'Yes, Create Order'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
