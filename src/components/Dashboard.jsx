@@ -89,6 +89,8 @@ const OPERATION_TILES = [
   { to: '/trip-manager',     label: 'Trip Manager',            icon: MapPinned,     roles: ['a','e','tr'] },
   { to: '/trip-listing',     label: 'Trip Listing',            icon: RouteIcon,     roles: ['a','e','tr'] },
   { to: '/accounts',         label: 'Accounts: PAY/REC',       icon: Wallet,        roles: ['a','ac'] },
+  { to: '/fleet-listing',    label: 'Fleet Manager',       icon: Truck,        roles: ['a','ac'] },
+
   // Driver-only ops
   { to: '/driver-trips',       label: 'Driver Trips',          icon: Car,           roles: ['d'] },
   { to: '/driver-deliveries',  label: 'Driver Deliveries',     icon: ClipboardList, roles: ['d'] }
