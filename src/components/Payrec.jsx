@@ -54,6 +54,9 @@ export default function PayRecManagement() {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
 
+  // customers for dropdowns
+  const [customers, setCustomers] = useState([]);
+
   // Filters
   const [fromDt, setFromDt] = useState('');
   const [toDt, setToDt] = useState('');
@@ -99,7 +102,26 @@ export default function PayRecManagement() {
     setRows(r.data?.items || []);
   };
 
-  useEffect(() => { loadRows().catch(() => setError('Failed to load records')); }, []);
+  useEffect(() => {
+    // load rows
+    loadRows().catch(() => setError('Failed to load records'));
+    // load customers for dropdowns
+    api.get('/customers')
+      .then(r => setCustomers(Array.isArray(r.data) ? r.data : []))
+      .catch(() => setCustomers([]));
+  }, []);
+
+  // quick index for code/name lookups
+  const byCode = useMemo(() => {
+    const m = new Map();
+    customers.forEach(c => m.set(c.custCd, c));
+    return m;
+  }, [customers]);
+  const byName = useMemo(() => {
+    const m = new Map();
+    customers.forEach(c => m.set(c.custName, c));
+    return m;
+  }, [customers]);
 
   // Apply client-side filters too (snappy UI)
   const filtered = useMemo(() => {
@@ -122,7 +144,11 @@ export default function PayRecManagement() {
   const pages = Math.max(1, Math.ceil(filtered.length / limit));
   const view = filtered.slice((page - 1) * limit, page * limit);
 
-  // Create
+  // ---- CREATE HANDLERS ----
+  const newForPartyDisabled = is1to4(form.trType);
+  const editForPartyDisabled = is1to4(editForm.trType);
+
+  // changing any regular input
   const handleChange = (e) => {
     const { name, type, value, checked } = e.target;
     setForm((f) => {
@@ -136,6 +162,44 @@ export default function PayRecManagement() {
       return next;
     });
     setError('');
+  };
+
+  // Party dropdown changes (code + name kept in sync)
+  const handlePartyCodeSelect = (e) => {
+    const code = e.target.value;
+    const c = byCode.get(code);
+    setForm(f => {
+      const next = { ...f, partyCode: code, partyName: c?.custName || '' };
+      if (is1to4(f.trType)) {
+        next.forPartyCode = next.partyCode;
+        next.forPartyName = next.partyName;
+      }
+      return next;
+    });
+  };
+  const handlePartyNameSelect = (e) => {
+    const name = e.target.value;
+    const c = byName.get(name);
+    setForm(f => {
+      const next = { ...f, partyName: name, partyCode: c?.custCd || '' };
+      if (is1to4(f.trType)) {
+        next.forPartyCode = next.partyCode;
+        next.forPartyName = next.partyName;
+      }
+      return next;
+    });
+  };
+
+  // For Party dropdown changes (only when enabled)
+  const handleForPartyCodeSelect = (e) => {
+    const code = e.target.value;
+    const c = byCode.get(code);
+    setForm(f => ({ ...f, forPartyCode: code, forPartyName: c?.custName || '' }));
+  };
+  const handleForPartyNameSelect = (e) => {
+    const name = e.target.value;
+    const c = byName.get(name);
+    setForm(f => ({ ...f, forPartyName: name, forPartyCode: c?.custCd || '' }));
   };
 
   const handleSubmit = async (e) => {
@@ -166,22 +230,7 @@ export default function PayRecManagement() {
     }
   };
 
-  // Soft delete / restore / status
-  const handleDelete = async (id) => {
-    if (!window.confirm('Soft delete this entry?')) return;
-    try { await api.delete(`/payrec/${id}`); await loadRows(); }
-    catch { alert('Failed to delete'); }
-  };
-  const handleRestore = async (id) => {
-    try { await api.patch(`/payrec/${id}/restore`); await loadRows(); }
-    catch { alert('Failed to restore'); }
-  };
-  const handleStatus = async (id, newStatus) => {
-    try { await api.patch(`/payrec/${id}/status`, { status: newStatus }); await loadRows(); }
-    catch { alert('Failed to update status'); }
-  };
-
-  // Edit
+  // ---- EDIT HANDLERS ----
   const startEdit = (r) => {
     setEditingId(r._id);
     setEditForm({
@@ -215,6 +264,42 @@ export default function PayRecManagement() {
     setError('');
   };
 
+  // Edit synced dropdowns
+  const handleEditPartyCodeSelect = (e) => {
+    const code = e.target.value;
+    const c = byCode.get(code);
+    setEditForm(f => {
+      const next = { ...f, partyCode: code, partyName: c?.custName || '' };
+      if (is1to4(f.trType)) {
+        next.forPartyCode = next.partyCode;
+        next.forPartyName = next.partyName;
+      }
+      return next;
+    });
+  };
+  const handleEditPartyNameSelect = (e) => {
+    const name = e.target.value;
+    const c = byName.get(name);
+    setEditForm(f => {
+      const next = { ...f, partyName: name, partyCode: c?.custCd || '' };
+      if (is1to4(f.trType)) {
+        next.forPartyCode = next.partyCode;
+        next.forPartyName = next.partyName;
+      }
+      return next;
+    });
+  };
+  const handleEditForPartyCodeSelect = (e) => {
+    const code = e.target.value;
+    const c = byCode.get(code);
+    setEditForm(f => ({ ...f, forPartyCode: code, forPartyName: c?.custName || '' }));
+  };
+  const handleEditForPartyNameSelect = (e) => {
+    const name = e.target.value;
+    const c = byName.get(name);
+    setEditForm(f => ({ ...f, forPartyName: name, forPartyCode: c?.custCd || '' }));
+  };
+
   const submitEdit = async (e) => {
     e.preventDefault();
     setEditLoading(true);
@@ -242,9 +327,6 @@ export default function PayRecManagement() {
       setEditLoading(false);
     }
   };
-
-  const newForPartyDisabled = is1to4(form.trType);
-  const editForPartyDisabled = is1to4(editForm.trType);
 
   const StatusPill = ({ value }) => {
     const map = {
@@ -365,38 +447,76 @@ export default function PayRecManagement() {
               </select>
             </div>
 
+            {/* Party (Code & Name dropdowns; selecting one fills the other) */}
             <div>
               <label className="block mb-1 text-sm font-medium text-slate-600">Party Code</label>
-              <input name="partyCode" value={form.partyCode} onChange={handleChange} required placeholder="CUST001"
-                     className="w-full border rounded-lg px-3 py-2 focus:ring-2 focus:ring-emerald-500"/>
+              <select
+                value={form.partyCode}
+                onChange={handlePartyCodeSelect}
+                className="w-full border rounded-lg px-3 py-2 focus:ring-2 focus:ring-emerald-500"
+              >
+                <option value="">Select code…</option>
+                {customers.map(c => (
+                  <option key={c._id} value={c.custCd}>{c.custCd}</option>
+                ))}
+              </select>
             </div>
             <div>
               <label className="block mb-1 text-sm font-medium text-slate-600">Party Name</label>
-              <input name="partyName" value={form.partyName} onChange={handleChange} placeholder="ABC Fuels"
-                     className="w-full border rounded-lg px-3 py-2 focus:ring-2 focus:ring-emerald-500"/>
+              <select
+                value={form.partyName}
+                onChange={handlePartyNameSelect}
+                className="w-full border rounded-lg px-3 py-2 focus:ring-2 focus:ring-emerald-500"
+              >
+                <option value="">Select name…</option>
+                {customers.map(c => (
+                  <option key={c._id} value={c.custName}>{c.custName}</option>
+                ))}
+              </select>
             </div>
 
+            {/* For Party (auto = Party for 1..4; otherwise own synced dropdowns) */}
             <div>
               <label className="block mb-1 text-sm font-medium text-slate-600">For Party Code</label>
-              <input
-                name="forPartyCode"
-                value={newForPartyDisabled ? form.partyCode : form.forPartyCode}
-                onChange={handleChange}
-                placeholder={newForPartyDisabled ? 'Auto = Party Code' : 'CUST002'}
-                disabled={newForPartyDisabled}
-                className={`w-full border rounded-lg px-3 py-2 ${newForPartyDisabled ? 'bg-gray-100' : 'focus:ring-2 focus:ring-emerald-500'}`}
-              />
+              {newForPartyDisabled ? (
+                <input
+                  value={form.partyCode}
+                  disabled
+                  className="w-full border rounded-lg px-3 py-2 bg-gray-100"
+                />
+              ) : (
+                <select
+                  value={form.forPartyCode}
+                  onChange={handleForPartyCodeSelect}
+                  className="w-full border rounded-lg px-3 py-2 focus:ring-2 focus:ring-emerald-500"
+                >
+                  <option value="">Select code…</option>
+                  {customers.map(c => (
+                    <option key={c._id} value={c.custCd}>{c.custCd}</option>
+                  ))}
+                </select>
+              )}
             </div>
             <div>
               <label className="block mb-1 text-sm font-medium text-slate-600">For Party Name</label>
-              <input
-                name="forPartyName"
-                value={newForPartyDisabled ? form.partyName : form.forPartyName}
-                onChange={handleChange}
-                placeholder={newForPartyDisabled ? 'Auto = Party Name' : 'XYZ Logistics'}
-                disabled={newForPartyDisabled}
-                className={`w-full border rounded-lg px-3 py-2 ${newForPartyDisabled ? 'bg-gray-100' : 'focus:ring-2 focus:ring-emerald-500'}`}
-              />
+              {newForPartyDisabled ? (
+                <input
+                  value={form.partyName}
+                  disabled
+                  className="w-full border rounded-lg px-3 py-2 bg-gray-100"
+                />
+              ) : (
+                <select
+                  value={form.forPartyName}
+                  onChange={handleForPartyNameSelect}
+                  className="w-full border rounded-lg px-3 py-2 focus:ring-2 focus:ring-emerald-500"
+                >
+                  <option value="">Select name…</option>
+                  {customers.map(c => (
+                    <option key={c._id} value={c.custName}>{c.custName}</option>
+                  ))}
+                </select>
+              )}
             </div>
 
             <div>
@@ -478,30 +598,66 @@ export default function PayRecManagement() {
                         {TR_TYPES.map(t => <option key={t.value} value={t.value}>{t.label}</option>)}
                       </select>
                     </td>
+
+                    {/* EDIT: Party dropdowns */}
                     <td className="px-3 py-2">
                       <div className="grid grid-cols-1 gap-1">
-                        <input name="partyCode" value={editForm.partyCode} onChange={handleEditChange}
-                               placeholder="CUST001" className="w-full border rounded-lg px-2 py-1"/>
-                        <input name="partyName" value={editForm.partyName} onChange={handleEditChange}
-                               placeholder="ABC Fuels" className="w-full border rounded-lg px-2 py-1"/>
+                        <select
+                          value={editForm.partyCode}
+                          onChange={handleEditPartyCodeSelect}
+                          className="w-full border rounded-lg px-2 py-1"
+                        >
+                          <option value="">Code…</option>
+                          {customers.map(c => (
+                            <option key={c._id} value={c.custCd}>{c.custCd}</option>
+                          ))}
+                        </select>
+                        <select
+                          value={editForm.partyName}
+                          onChange={handleEditPartyNameSelect}
+                          className="w-full border rounded-lg px-2 py-1"
+                        >
+                          <option value="">Name…</option>
+                          {customers.map(c => (
+                            <option key={c._id} value={c.custName}>{c.custName}</option>
+                          ))}
+                        </select>
                       </div>
                     </td>
+
+                    {/* EDIT: For Party dropdowns / mirror */}
                     <td className="px-3 py-2">
-                      <div className="grid grid-cols-1 gap-1">
-                        <input name="forPartyCode"
-                               value={editForPartyDisabled ? editForm.partyCode : editForm.forPartyCode}
-                               onChange={handleEditChange}
-                               placeholder={editForPartyDisabled ? 'Auto' : 'CUST002'}
-                               disabled={editForPartyDisabled}
-                               className={`w-full border rounded-lg px-2 py-1 ${editForPartyDisabled ? 'bg-gray-100' : ''}`}/>
-                        <input name="forPartyName"
-                               value={editForPartyDisabled ? editForm.partyName : editForm.forPartyName}
-                               onChange={handleEditChange}
-                               placeholder={editForPartyDisabled ? 'Auto' : 'XYZ Logistics'}
-                               disabled={editForPartyDisabled}
-                               className={`w-full border rounded-lg px-2 py-1 ${editForPartyDisabled ? 'bg-gray-100' : ''}`}/>
-                      </div>
+                      {editForPartyDisabled ? (
+                        <div className="grid grid-cols-1 gap-1">
+                          <input value={editForm.partyCode} disabled className="w-full border rounded-lg px-2 py-1 bg-gray-100"/>
+                          <input value={editForm.partyName} disabled className="w-full border rounded-lg px-2 py-1 bg-gray-100"/>
+                        </div>
+                      ) : (
+                        <div className="grid grid-cols-1 gap-1">
+                          <select
+                            value={editForm.forPartyCode}
+                            onChange={handleEditForPartyCodeSelect}
+                            className="w-full border rounded-lg px-2 py-1"
+                          >
+                            <option value="">Code…</option>
+                            {customers.map(c => (
+                              <option key={c._id} value={c.custCd}>{c.custCd}</option>
+                            ))}
+                          </select>
+                          <select
+                            value={editForm.forPartyName}
+                            onChange={handleEditForPartyNameSelect}
+                            className="w-full border rounded-lg px-2 py-1"
+                          >
+                            <option value="">Name…</option>
+                            {customers.map(c => (
+                              <option key={c._id} value={c.custName}>{c.custName}</option>
+                            ))}
+                          </select>
+                        </div>
+                      )}
                     </td>
+
                     <td className="px-3 py-2">
                       <select name="mode" value={editForm.mode} onChange={handleEditChange}
                               className="w-full border rounded-lg px-2 py-1">

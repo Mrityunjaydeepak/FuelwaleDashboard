@@ -23,30 +23,76 @@ export default function ManageOrders() {
   const [showConfirm, setShowConfirm] = useState(false);
   const [pendingPayload, setPendingPayload] = useState(null);
 
-  // Which address (Address 1 / Address 2) is selected in the dropdown
-  const [shipToChoice, setShipToChoice] = useState(''); // 'shipTo1' | 'shipTo2' | ''
+  // selected ship-to key: 'shipTo1'..'shipTo5'
+  const [shipToChoice, setShipToChoice] = useState('shipTo1');
 
   const selectedCustomer = useMemo(
     () => customers.find(c => String(c._id) === String(form.customerId)) || null,
     [customers, form.customerId]
   );
 
-  // Build Address 1 / Address 2 options from selectedCustomer.shipTo
+  // Format a shipping block (1..5) from individual fields
+  const buildShipToValueFromFields = (c, idx) => {
+    const a1 = c?.[`shipTo${idx}Add1`] || '';
+    const a2 = c?.[`shipTo${idx}Add2`] || '';
+    const a3 = c?.[`shipTo${idx}Add3`] || '';
+    const area = c?.[`shipTo${idx}Area`] || '';
+    const city = c?.[`shipTo${idx}City`] || '';
+    const pin = c?.[`shipTo${idx}Pin`] != null && c[`shipTo${idx}Pin`] !== '' ? String(c[`shipTo${idx}Pin`]) : '';
+    const st  = c?.[`shipTo${idx}StateCd`] || '';
+
+    const lines = [a1, a2, a3].filter(Boolean).join('\n');
+    const areaCity = [area, city].filter(Boolean).join(', ');
+    const tail = [pin, st].filter(Boolean).join(', ');
+
+    return [lines, areaCity, tail].filter(Boolean).join('\n').trim();
+  };
+
+  // Fallback: format from legacy c.shipTo[idx-1]
+  const buildShipToValueFromArray = (c, idx) => {
+    const arr = Array.isArray(c?.shipTo) ? c.shipTo : [];
+    const raw = arr[idx - 1];
+    if (!raw) return '';
+    // accept either string or object with fields
+    if (typeof raw === 'string') return raw.trim();
+    if (raw && typeof raw === 'object') {
+      const { add1, add2, add3, area, city, pin, stateCd } = raw;
+      const lines = [add1, add2, add3].filter(Boolean).join('\n');
+      const areaCity = [area, city].filter(Boolean).join(', ');
+      const tail = [pin, stateCd].filter(Boolean).join(', ');
+      return [lines, areaCity, tail].filter(Boolean).join('\n').trim();
+    }
+    return '';
+  };
+
+  // Build 5 options using fields; if empty, try legacy array
   const shipToOptions = useMemo(() => {
-    if (!selectedCustomer || !Array.isArray(selectedCustomer.shipTo)) return [];
-    return selectedCustomer.shipTo.map((addr, idx) => {
-      const firstPart = String(addr || '').split(',')[0] || addr || '';
-      return {
-        key: idx === 0 ? 'shipTo1' : 'shipTo2',
-        label: `Address ${idx + 1}: ${firstPart}`,
-        value: addr
-      };
-    });
+    if (!selectedCustomer) return [];
+    const opts = [];
+    for (let i = 1; i <= 5; i++) {
+      let value = buildShipToValueFromFields(selectedCustomer, i);
+      if (!value) value = buildShipToValueFromArray(selectedCustomer, i);
+      const firstLine =
+        selectedCustomer[`shipTo${i}Add1`] ||
+        (typeof (selectedCustomer.shipTo?.[i - 1]) === 'string'
+          ? selectedCustomer.shipTo[i - 1].split('\n')[0]
+          : selectedCustomer.shipTo?.[i - 1]?.add1) ||
+        value.split('\n')[0] ||
+        '';
+      opts.push({
+        key: `shipTo${i}`,
+        label: `Address ${i}: ${firstLine || '(empty)'}`,
+        value,
+        empty: value.length === 0
+      });
+    }
+    return opts;
   }, [selectedCustomer]);
 
+  // Load customers from the full /customers endpoint so we actually get all fields
   useEffect(() => {
     let alive = true;
-    api.get('/orders/customers')
+    api.get('/customers')
       .then(res => {
         if (!alive) return;
         setCustomers(Array.isArray(res.data) ? res.data : []);
@@ -55,19 +101,17 @@ export default function ManageOrders() {
     return () => { alive = false; };
   }, []);
 
-  // When customer changes, default Address dropdown & shipToAddress
+  // When customer changes, pick first non-empty address (fallback to Address 1)
   useEffect(() => {
     if (!selectedCustomer) {
-      setShipToChoice('');
+      setShipToChoice('shipTo1');
       setForm(f => ({ ...f, shipToAddress: '' }));
       return;
     }
-    if (shipToOptions.length > 0) {
-      setShipToChoice(shipToOptions[0].key);
-      setForm(f => ({ ...f, shipToAddress: shipToOptions[0].value }));
-    } else {
-      setShipToChoice('');
-      setForm(f => ({ ...f, shipToAddress: '' }));
+    if (shipToOptions.length) {
+      const firstNonEmpty = shipToOptions.find(o => !o.empty) || shipToOptions[0];
+      setShipToChoice(firstNonEmpty.key);
+      setForm(f => ({ ...f, shipToAddress: firstNonEmpty.value }));
     }
   }, [selectedCustomer, shipToOptions]);
 
@@ -102,24 +146,14 @@ export default function ManageOrders() {
     });
   };
 
-  // Build payload + open confirmation
   const handleSubmit = async e => {
     e.preventDefault();
     setError('');
 
-    // Basic validation
-    if (!form.deliveryDate) {
-      setError('Please select a delivery date.');
-      return;
-    }
-    if (!form.deliveryTimeStart || !form.deliveryTimeEnd) {
-      setError('Please select a delivery time range.');
-      return;
-    }
-    if (form.deliveryTimeEnd <= form.deliveryTimeStart) {
-      setError('Time To must be later than Time From.');
-      return;
-    }
+    if (!form.customerId) return setError('Please select a customer.');
+    if (!form.deliveryDate) return setError('Please select a delivery date.');
+    if (!form.deliveryTimeStart || !form.deliveryTimeEnd) return setError('Please select a delivery time range.');
+    if (form.deliveryTimeEnd <= form.deliveryTimeStart) return setError('Time To must be later than Time From.');
 
     const cleanedItems = form.items
       .map(i => ({
@@ -129,10 +163,7 @@ export default function ManageOrders() {
       }))
       .filter(i => i.quantity > 0 && i.rate >= 0);
 
-    if (cleanedItems.length === 0) {
-      setError('Please add at least one item with a quantity > 0.');
-      return;
-    }
+    if (cleanedItems.length === 0) return setError('Please add at least one item with a quantity > 0.');
 
     const deliveryTimeSlot = `${form.deliveryTimeStart} - ${form.deliveryTimeEnd}`;
     const payload = {
@@ -145,7 +176,7 @@ export default function ManageOrders() {
     };
 
     setPendingPayload(payload);
-    setShowConfirm(true); // open confirmation modal
+    setShowConfirm(true);
   };
 
   const confirmAndPost = async () => {
@@ -153,9 +184,8 @@ export default function ManageOrders() {
     setLoading(true);
     try {
       await api.post('/orders', pendingPayload);
-      // reset
       setForm(initialForm);
-      setShipToChoice('');
+      setShipToChoice('shipTo1');
       setPendingPayload(null);
       setShowConfirm(false);
     } catch (err) {
@@ -165,19 +195,16 @@ export default function ManageOrders() {
     }
   };
 
-  // Filtered lists (Active selectable, others greyed)
   const activeCustomers   = customers.filter(c => c.status === 'Active');
   const inactiveCustomers = customers.filter(c => c.status !== 'Active');
 
-  // Handle Address 1/2 dropdown change: update both choice & the actual form.shipToAddress
   const handleShipToChoiceChange = (e) => {
-    const key = e.target.value; // 'shipTo1' | 'shipTo2'
+    const key = e.target.value;
     setShipToChoice(key);
     const opt = shipToOptions.find(o => o.key === key);
     setForm(f => ({ ...f, shipToAddress: opt ? opt.value : '' }));
   };
 
-  // Simple total (optional UI cue)
   const orderTotal = useMemo(() => {
     return form.items.reduce((sum, it) => {
       const q = Number(it.quantity || 0);
@@ -200,7 +227,7 @@ export default function ManageOrders() {
         {error && <div className="text-red-600 mb-4">{error}</div>}
 
         <form onSubmit={handleSubmit} className="space-y-4">
-          {/* Customer select: Active first (selectable), then greyed non-active */}
+          {/* Customer select */}
           <div>
             <label className="block text-sm mb-1">Customer</label>
             <select
@@ -225,12 +252,7 @@ export default function ManageOrders() {
               {inactiveCustomers.length > 0 && (
                 <optgroup label="Inactive / Suspended">
                   {inactiveCustomers.map(c => (
-                    <option
-                      key={c._id}
-                      value={c._id}
-                      disabled
-                      className="text-gray-400"
-                    >
+                    <option key={c._id} value={c._id} disabled className="text-gray-400">
                       {c.custCd} — {c.custName} — ₹{Number(c.outstanding || 0).toLocaleString('en-IN')} ({c.status})
                     </option>
                   ))}
@@ -248,40 +270,30 @@ export default function ManageOrders() {
             )}
           </div>
 
-          {/* Ship-To selector */}
-          <div>
-            <label className="block text-sm mb-1">Ship To Address</label>
+          {/* Ship-To selector (always visible when customer is chosen) */}
+          {selectedCustomer && (
+            <div>
+              <label className="block text-sm mb-1">Ship To Address</label>
+              <select
+                value={shipToChoice}
+                onChange={handleShipToChoiceChange}
+                className="w-full border rounded px-3 py-2 mb-2"
+              >
+                {shipToOptions.map(opt => (
+                  <option key={opt.key} value={opt.key} disabled={opt.empty}>
+                    {opt.label}{opt.empty ? ' (empty)' : ''}
+                  </option>
+                ))}
+              </select>
 
-            {shipToOptions.length > 0 ? (
-              <>
-                <select
-                  value={shipToChoice}
-                  onChange={handleShipToChoiceChange}
-                  className="w-full border rounded px-3 py-2 mb-2"
-                >
-                  {shipToOptions.map(opt => (
-                    <option key={opt.key} value={opt.key}>{opt.label}</option>
-                  ))}
-                </select>
-
-                <textarea
-                  readOnly
-                  value={form.shipToAddress}
-                  className="w-full border rounded px-3 py-2 bg-gray-50 text-sm"
-                  rows={2}
-                />
-              </>
-            ) : (
-              <input
-                name="shipToAddress"
+              <textarea
+                readOnly
                 value={form.shipToAddress}
-                onChange={handleFormChange}
-                required
-                placeholder="Ship To Address"
-                className="w-full border rounded px-3 py-2"
+                className="w-full border rounded px-3 py-2 bg-gray-50 text-sm"
+                rows={3}
               />
-            )}
-          </div>
+            </div>
+          )}
 
           {/* Order Type */}
           <div>
@@ -389,7 +401,7 @@ export default function ManageOrders() {
             </div>
           </div>
 
-          {/* Quick total (optional visual) */}
+          {/* Quick total */}
           <div className="text-right text-sm text-gray-600">
             <span className="font-medium">Approx. Total: </span>
             ₹{orderTotal.toLocaleString('en-IN', { maximumFractionDigits: 2 })}
