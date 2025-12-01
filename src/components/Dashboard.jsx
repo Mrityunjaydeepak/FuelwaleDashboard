@@ -1,5 +1,5 @@
 import React, { useMemo } from 'react';
-import { Link, useSearchParams } from 'react-router-dom';
+import { Link, useSearchParams, useNavigate } from 'react-router-dom';
 import {
   Building2,
   Route as RouteIcon,
@@ -20,11 +20,14 @@ import {
 
 /**
  * Dashboard with URL-driven sub-views:
- * - Root shows two tiles: "Masters" and "Operations".
- * - Clicking either switches to /?view=masters or /?view=operations.
- * - Small "Back" clears ?view (back to root).
- * - Individual tiles still navigate to their own routes (<Link/>).
+ * - Root (no ?view) shows the Excel-like screen:
+ *   left vertical buttons (MASTERS / OPERATION / ACCOUNTS / REPORTS),
+ *   right logo, top-right Home/Back/Log Out/Admin.
+ * - Clicking a left button sets ?view=masters / operations / accounts / reports.
+ * - Each view shows gradient tile grid for its section using the existing theme.
  */
+
+/* ---------- Helpers to read current user/role ---------- */
 
 function getCurrentRole() {
   try {
@@ -57,7 +60,7 @@ function getCurrentUserName() {
       if (raw) return toTitle(String(raw));
     }
   } catch {}
-  return 'User';
+  return 'Md100'; // fallback like your screenshot
 }
 
 function toTitle(s) {
@@ -68,7 +71,7 @@ function toTitle(s) {
     .replace(/\b\w/g, (m) => m.toUpperCase());
 }
 
-/** ---------------- Categorized tiles ---------------- **/
+/* ---------- Tile configuration ---------- */
 
 // Master screens
 const MASTER_TILES = [
@@ -82,21 +85,33 @@ const MASTER_TILES = [
   { to: '/loading-source-master',  label: 'Loading Source Master',   icon: Fuel,               roles: ['a'] }
 ];
 
-// Operation screens (incl. driver + accounts if allowed)
+// Operation screens
 const OPERATION_TILES = [
   { to: '/create-order',     label: 'Create Order',            icon: Truck,         roles: ['a','e'] },
   { to: '/list-order',       label: 'List Orders',             icon: ListOrdered,   roles: ['a','e'] },
   { to: '/trip-manager',     label: 'Trip Manager',            icon: MapPinned,     roles: ['a','e','tr'] },
   { to: '/trip-listing',     label: 'Trip Listing',            icon: RouteIcon,     roles: ['a','e','tr'] },
   { to: '/accounts',         label: 'Accounts: PAY/REC',       icon: Wallet,        roles: ['a','ac'] },
-  { to: '/fleet-listing',    label: 'Fleet Manager',       icon: Truck,        roles: ['a','ac'] },
+  { to: '/fleet-listing',    label: 'Fleet Manager',           icon: Truck,         roles: ['a','ac'] },
 
   // Driver-only ops
   { to: '/driver-trips',       label: 'Driver Trips',          icon: Car,           roles: ['d'] },
   { to: '/driver-deliveries',  label: 'Driver Deliveries',     icon: ClipboardList, roles: ['d'] }
 ];
 
-// Gradient palette
+// Dedicated accounts section (can be expanded later)
+const ACCOUNTS_TILES = [
+  { to: '/accounts',      label: 'Accounts: PAY/REC',   icon: Wallet,  roles: ['a','ac'] },
+  { to: '/fleet-listing', label: 'Fleet Manager',       icon: Truck,   roles: ['a','ac'] }
+];
+
+// Simple reports section (you can adjust routes/titles)
+const REPORT_TILES = [
+  { to: '/trip-listing', label: 'Trip Listing',     icon: RouteIcon,     roles: ['a','e','tr','ac'] },
+  { to: '/list-order',   label: 'Order Reports',    icon: ClipboardList, roles: ['a','e','ac'] }
+];
+
+// Gradient palette for tiles
 const COLORS = [
   'from-indigo-500 to-indigo-600',
   'from-emerald-500 to-emerald-600',
@@ -113,8 +128,9 @@ const COLORS = [
 ];
 
 export default function Dashboard() {
+  const navigate = useNavigate();
   const [params, setParams] = useSearchParams();
-  const view = params.get('view') ?? 'root'; // 'root' | 'masters' | 'operations'
+  const view = params.get('view') ?? 'root'; // 'root' | 'masters' | 'operations' | 'accounts' | 'reports'
 
   const role = useMemo(getCurrentRole, []);
   const userName = useMemo(getCurrentUserName, []);
@@ -127,84 +143,212 @@ export default function Dashboard() {
     () => OPERATION_TILES.filter(t => t.roles.includes(role)),
     [role]
   );
+  const visibleAccounts = useMemo(
+    () => ACCOUNTS_TILES.filter(t => t.roles.includes(role)),
+    [role]
+  );
+  const visibleReports = useMemo(
+    () => REPORT_TILES.filter(t => t.roles.includes(role)),
+    [role]
+  );
 
-  const goRoot = () => setParams({}, { replace: false }); // clears ?view
+  const setView = (v) => {
+    if (!v || v === 'root') {
+      setParams({}, { replace: true });
+    } else {
+      setParams({ view: v }, { replace: true });
+    }
+  };
+
+  /* ---------- Top nav handlers ---------- */
+
+  const handleHome = () => {
+    navigate('/dashboard');
+    setView('root');
+  };
+
+  const handleBack = () => {
+    if (view !== 'root') {
+      setView('root');
+    } else {
+      navigate(-1);
+    }
+  };
+
+  const handleLogout = () => {
+    localStorage.removeItem('token');
+    sessionStorage.removeItem('token');
+    navigate('/login');
+  };
+
+  /* ---------- Render ---------- */
 
   return (
-    <div className="min-h-screen bg-gradient-to-br from-gray-50 to-gray-100 p-6">
-      <header className="mb-6 flex items-center justify-between">
-        <div>
-          <h2 className="text-2xl font-semibold text-gray-900">
-            Welcome, {userName}!
-          </h2>
-          <p className="text-sm text-gray-500 mt-1">
-            {view === 'root'
-              ? 'Choose a category to continue.'
-              : view === 'masters'
-              ? 'Manage master data for your organization.'
-              : 'Run day-to-day operational workflows.'}
-          </p>
-        </div>
-        <div className="flex items-center gap-2">
-          {view !== 'root' && (
+    <div className="min-h-screen bg-gray-100 py-4 px-2 sm:px-4">
+      <div className="max-w-6xl mx-auto bg-white border border-gray-300 shadow-sm min-h-[80vh] flex flex-col">
+        {/* Top row: Welcome + nav buttons */}
+        <div className="flex items-center justify-between px-4 py-2 border-b border-gray-300">
+          <div className="flex items-center gap-3 text-xs sm:text-sm">
+            <span>Welcome: <span className="font-semibold">{userName}!</span></span>
+            <RoleBadge role={role} />
+          </div>
+          <div className="flex gap-2 justify-end">
             <button
-              onClick={goRoot}
-              className="mr-2 inline-flex items-center gap-2 px-3 py-1.5 rounded-md text-sm bg-white shadow hover:shadow-md border"
-              title="Back to Dashboard"
+              type="button"
+              onClick={handleHome}
+              className="px-4 py-1 border border-gray-500 rounded-sm text-[11px] sm:text-xs bg-orange-500 text-white hover:bg-orange-600"
             >
-              ← Back
+              Home
             </button>
-          )}
-          <RoleBadge role={role} />
-        </div>
-      </header>
-
-      {/* Root: two big buttons that navigate via URL to preserve history */}
-      {view === 'root' && (
-        <div className="grid gap-5 sm:grid-cols-2">
-          {visibleMasters.length > 0 && (
-            <Link
-              to={{ pathname: '/', search: '?view=masters' }}
-              className={tileButtonClass('from-indigo-500 to-indigo-600')}
+            <button
+              type="button"
+              onClick={handleBack}
+              className="px-4 py-1 border border-gray-500 rounded-sm text-[11px] sm:text-xs bg-orange-500 text-white hover:bg-orange-600"
             >
-              <TileButtonInner icon={Blocks} title="Masters" desc="All master data screens" />
-            </Link>
+              Back
+            </button>
+            <button
+              type="button"
+              onClick={handleLogout}
+              className="px-4 py-1 border border-gray-500 rounded-sm text-[11px] sm:text-xs bg-orange-500 text-white hover:bg-orange-600"
+            >
+              Log Out
+            </button>
+            <button
+              type="button"
+              className="px-4 py-1 text-[11px] sm:text-xs text-red-600 underline"
+            >
+              Admin
+            </button>
+          </div>
+        </div>
+
+        {/* Main content area */}
+        <div className="flex-1 p-6">
+          {/* ROOT VIEW: Excel-style dashboard */}
+          {view === 'root' && (
+            <div className="h-full flex flex-col md:flex-row items-center md:items-start justify-center md:justify-between gap-10">
+              {/* Left vertical menu buttons */}
+              <div className="flex flex-col gap-4 w-full md:w-auto max-w-xs">
+                <DashMenuButton label="MASTERS" onClick={() => setView('masters')} />
+                <DashMenuButton label="OPERATION" onClick={() => setView('operations')} />
+                <DashMenuButton label="ACCOUNTS" onClick={() => setView('accounts')} />
+                <DashMenuButton label="REPORTS" onClick={() => setView('reports')} />
+              </div>
+
+              {/* Right logo area */}
+              <div className="flex-1 flex items-center justify-center w-full">
+                <div className="w-full max-w-md aspect-video flex items-center justify-center bg-white border border-gray-300 rounded-lg shadow-sm">
+                  {/* Replace this with your actual logo image */}
+                  {/* <img src="/images/fuelwale-logo.png" alt="fuelwale" className="max-h-full max-w-full object-contain" /> */}
+                  <div className="text-4xl sm:text-5xl font-bold tracking-tight">
+                    <span className="text-orange-600">fuel</span>
+                    <span className="text-purple-700">wale</span>
+                  </div>
+                </div>
+              </div>
+            </div>
           )}
 
-          {visibleOps.length > 0 && (
-            <Link
-              to={{ pathname: '/', search: '?view=operations' }}
-              className={tileButtonClass('from-emerald-500 to-emerald-600')}
+          {/* MASTERS VIEW */}
+          {view === 'masters' && (
+            <SectionWithTitle
+              title="MASTERS"
+              subtitle="Manage master data for your organization."
             >
-              <TileButtonInner icon={Wrench} title="Operations" desc="Orders, trips, accounts and more" />
-            </Link>
+              {visibleMasters.length > 0 ? (
+                <TileGrid tiles={visibleMasters} />
+              ) : (
+                <EmptyForRole />
+              )}
+            </SectionWithTitle>
+          )}
+
+          {/* OPERATIONS VIEW */}
+          {view === 'operations' && (
+            <SectionWithTitle
+              title="OPERATION"
+              subtitle="Run day-to-day operational workflows."
+            >
+              {visibleOps.length > 0 ? (
+                <TileGrid tiles={visibleOps} />
+              ) : (
+                <EmptyForRole />
+              )}
+            </SectionWithTitle>
+          )}
+
+          {/* ACCOUNTS VIEW */}
+          {view === 'accounts' && (
+            <SectionWithTitle
+              title="ACCOUNTS"
+              subtitle="Accounts and related operations."
+            >
+              {visibleAccounts.length > 0 ? (
+                <TileGrid tiles={visibleAccounts} />
+              ) : (
+                <EmptyForRole />
+              )}
+            </SectionWithTitle>
+          )}
+
+          {/* REPORTS VIEW */}
+          {view === 'reports' && (
+            <SectionWithTitle
+              title="REPORTS"
+              subtitle="View and analyze operational reports."
+            >
+              {visibleReports.length > 0 ? (
+                <TileGrid tiles={visibleReports} />
+              ) : (
+                <EmptyForRole />
+              )}
+            </SectionWithTitle>
           )}
         </div>
-      )}
-
-      {/* Masters */}
-      {view === 'masters' && (
-        <>
-          <TileGrid tiles={visibleMasters} />
-          {visibleMasters.length === 0 && <EmptyForRole />}
-        </>
-      )}
-
-      {/* Operations */}
-      {view === 'operations' && (
-        <>
-          <TileGrid tiles={visibleOps} />
-          {visibleOps.length === 0 && <EmptyForRole />}
-        </>
-      )}
-
-      {/* Fallback when neither category is available */}
-      {view === 'root' && visibleMasters.length === 0 && visibleOps.length === 0 && <EmptyForRole />}
+      </div>
     </div>
   );
 }
 
-/** ---------- Reusable UI bits ---------- **/
+/* ---------- Reusable UI pieces ---------- */
+
+function DashMenuButton({ label, onClick }) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      className="
+        w-full px-8 py-3
+        bg-[#0d6078] text-white
+        rounded-full
+        text-lg font-semibold tracking-wide
+        shadow
+        border border-[#084253]
+        hover:bg-[#0f6f8b]
+        transition-colors
+      "
+    >
+      {label}
+    </button>
+  );
+}
+
+function SectionWithTitle({ title, subtitle, children }) {
+  return (
+    <div className="space-y-4">
+      <div>
+        <h2 className="text-lg sm:text-xl font-semibold text-gray-900">
+          {title}
+        </h2>
+        <p className="text-xs sm:text-sm text-gray-500 mt-1">{subtitle}</p>
+      </div>
+      <div className="bg-gradient-to-br from-gray-50 to-gray-100 rounded-lg p-4 sm:p-5">
+        {children}
+      </div>
+    </div>
+  );
+}
 
 function tileButtonClass(gradient) {
   return `
@@ -213,23 +357,7 @@ function tileButtonClass(gradient) {
     text-white
     shadow hover:shadow-lg transition-all
     focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-indigo-500
-    text-left
   `;
-}
-
-function TileButtonInner({ icon: Icon, title, desc }) {
-  return (
-    <div className="p-5 flex items-center gap-4 w-full">
-      <div className="rounded-lg bg-white/15 p-3 backdrop-blur-sm group-hover:scale-105 transition-transform">
-        <Icon size={26} />
-      </div>
-      <div className="flex-1">
-        <div className="font-semibold">{title}</div>
-        <div className="text-white/80 text-xs mt-0.5">{desc}</div>
-      </div>
-      <div className="absolute bottom-0 left-0 right-0 h-1 bg-white/30 opacity-0 group-hover:opacity-100 transition-opacity" />
-    </div>
-  );
 }
 
 function TileGrid({ tiles }) {
@@ -239,13 +367,7 @@ function TileGrid({ tiles }) {
         <Link
           key={to}
           to={to}
-          className={`
-            group relative overflow-hidden rounded-xl
-            bg-gradient-to-br ${COLORS[idx % COLORS.length]}
-            text-white
-            shadow hover:shadow-lg transition-all
-            focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-indigo-500
-          `}
+          className={tileButtonClass(COLORS[idx % COLORS.length])}
         >
           <div className="p-5 flex items-center gap-4">
             <div className="rounded-lg bg-white/15 p-3 backdrop-blur-sm group-hover:scale-105 transition-transform">
@@ -265,8 +387,8 @@ function TileGrid({ tiles }) {
 
 function EmptyForRole() {
   return (
-    <div className="mt-16 text-center text-gray-500">
-      No actions available for your role.
+    <div className="py-10 text-center text-gray-500 text-sm">
+      No actions available for your role in this section.
     </div>
   );
 }
@@ -282,7 +404,7 @@ function RoleBadge({ role }) {
   };
   const cfg = map[role] || map.a;
   return (
-    <span className={`inline-flex items-center gap-2 px-3 py-1.5 rounded-full text-sm ${cfg.className}`}>
+    <span className={`inline-flex items-center gap-2 px-3 py-1.5 rounded-full text-[11px] sm:text-xs ${cfg.className}`}>
       <span className="h-2 w-2 rounded-full bg-current opacity-70" />
       {cfg.label}
     </span>
