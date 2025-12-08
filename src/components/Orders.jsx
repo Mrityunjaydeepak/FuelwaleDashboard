@@ -16,7 +16,7 @@ export default function ManageOrders() {
   const initialForm = {
     customerId: '',
     shipToAddress: '',
-    items: [{ productName: 'diesel', quantity: '', rate: '' }],
+    items: [{ productName: 'diesel', quantity: '' }],
     deliveryDate: '',
     deliveryTimeStart: '',
     deliveryTimeEnd: '',
@@ -36,6 +36,73 @@ export default function ManageOrders() {
 
   // selected ship-to key: 'shipTo1'..'shipTo5'
   const [shipToChoice, setShipToChoice] = useState('shipTo1');
+
+  // logged-in user
+  const [currentUserId, setCurrentUserId] = useState('');
+  const [currentUserType, setCurrentUserType] = useState('');
+
+  // ---- USER INFO (tries multiple common storage patterns so it's not blank) ----
+  useEffect(() => {
+    let id = '';
+    let type = '';
+
+    // 1) Try a stored user object: localStorage.setItem('user', JSON.stringify(user))
+    const rawUser =
+      localStorage.getItem('user') ||
+      localStorage.getItem('currentUser') ||
+      localStorage.getItem('loggedInUser');
+
+    if (rawUser) {
+      try {
+        const u = JSON.parse(rawUser);
+        id =
+          u.userId ||
+          u.username ||
+          u.name ||
+          u.loginId ||
+          id;
+        type =
+          u.userType ||
+          u.type ||
+          u.role ||
+          type;
+      } catch {
+        // ignore JSON errors and just fall back to simple keys
+      }
+    }
+
+    // 2) Try simple scalar keys
+    if (!id) {
+      id =
+        localStorage.getItem('userId') ||
+        localStorage.getItem('userName') ||
+        localStorage.getItem('username') ||
+        '';
+    }
+    if (!type) {
+      type =
+        localStorage.getItem('userType') ||
+        localStorage.getItem('role') ||
+        localStorage.getItem('userRole') ||
+        '';
+    }
+
+    setCurrentUserId(id);
+    setCurrentUserType(type);
+  }, []);
+
+  const roleLabelMap = {
+    A: 'Admin',
+    E: 'Sales Employee',
+    D: 'Driver',
+    C: 'Customer',
+    VA: 'Vehicle Allocation',
+    TR: 'Trips',
+    AC: 'Accounts',
+  };
+
+  const roleLabel = roleLabelMap[currentUserType] || '';
+  const displayName = currentUserId || 'User';
 
   const selectedCustomer = useMemo(
     () =>
@@ -122,7 +189,7 @@ export default function ManageOrders() {
         setCustomers(Array.isArray(res.data) ? res.data : []);
       })
       .catch((err) =>
-        setError(err.response?.data?.error || 'Failed to load customers')
+        setError(err.response?.data?.error || 'Failed to load customers.')
       );
     return () => {
       alive = false;
@@ -204,7 +271,7 @@ export default function ManageOrders() {
   const addItem = () => {
     setForm((f) => ({
       ...f,
-      items: [...f.items, { productName: 'diesel', quantity: '', rate: '' }],
+      items: [...f.items, { productName: 'diesel', quantity: '' }],
     }));
   };
 
@@ -237,12 +304,11 @@ export default function ManageOrders() {
       .map((i) => ({
         productName: (i.productName || '').trim() || 'diesel',
         quantity: Number(i.quantity),
-        rate: Number(i.rate),
       }))
-      .filter((i) => i.quantity > 0 && i.rate >= 0);
+      .filter((i) => i.quantity > 0);
 
     if (cleanedItems.length === 0)
-      return setError('Please add at least one item with a quantity > 0.');
+      return setError('Please add at least one item with a quantity greater than 0.');
 
     const deliveryTimeSlot = `${form.deliveryTimeStart} - ${form.deliveryTimeEnd}`;
     const payload = {
@@ -272,7 +338,7 @@ export default function ManageOrders() {
       setPendingPayload(null);
       setShowConfirm(false);
     } catch (err) {
-      setError(err.response?.data?.error || 'Failed to create order');
+      setError(err.response?.data?.error || 'Failed to create order.');
     } finally {
       setLoading(false);
     }
@@ -281,11 +347,10 @@ export default function ManageOrders() {
   const activeCustomers = customers.filter((c) => c.status === 'Active');
   const inactiveCustomers = customers.filter((c) => c.status !== 'Active');
 
-  const orderTotal = useMemo(() => {
+  const totalQuantity = useMemo(() => {
     return form.items.reduce((sum, it) => {
       const q = Number(it.quantity || 0);
-      const r = Number(it.rate || 0);
-      return sum + (isFinite(q) && isFinite(r) ? q * r : 0);
+      return sum + (isFinite(q) ? q : 0);
     }, 0);
   }, [form.items]);
 
@@ -297,15 +362,20 @@ export default function ManageOrders() {
         {/* Main title */}
         <header className="border-b border-gray-300 px-4 py-3">
           <h1 className="text-center font-semibold tracking-wide text-base sm:text-lg">
-            ORDER SUBMITTION BY ALL USERS &amp; STATUS UPDATE
+            ORDER SUBMISSION BY ALL USERS &amp; STATUS UPDATE
           </h1>
         </header>
 
         {/* Welcome + top nav */}
         <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-2 px-4 py-1.5 border-b border-gray-300 bg-gray-50">
           <div className="text-[10px] sm:text-[11px]">
-            Welcome. Md100! Display Ordered by – Sales Asso/Sales Employee /
-            Online direct/ Customer
+            Welcome, {displayName}!
+            {roleLabel && (
+              <>
+                {' '}
+                ({roleLabel})
+              </>
+            )}
           </div>
           <div className="flex gap-2 justify-end">
             <button
@@ -353,10 +423,10 @@ export default function ManageOrders() {
               <PlusIcon size={14} /> Add Order
             </button>
             <button className="px-4 py-1.5 bg-blue-600 text-white rounded-sm">
-              View all Order
+              View All Orders
             </button>
             <button className="px-4 py-1.5 bg-blue-600 text-white rounded-sm text-center">
-              View Open/ Close/ Cancel Order Individual
+              View Individual Open / Closed / Cancelled Orders
             </button>
           </div>
         </section>
@@ -368,7 +438,7 @@ export default function ManageOrders() {
             <div className="flex flex-col md:flex-row gap-4">
               <div className="flex-1 space-y-1">
                 <div className="flex gap-2 items-baseline">
-                  <span className="font-medium">mapped Depot Code</span>
+                  <span className="font-medium">Mapped Depot Code</span>
                   {/* Customer model: depotCd */}
                   <span className="font-semibold">
                     {selectedCustomer?.depotCd || '—'}
@@ -380,13 +450,13 @@ export default function ManageOrders() {
                   </span>
                 </div>
                 <div className="flex gap-2 items-baseline">
-                  <span className="font-medium">Select Customer</span>
+                  <span className="font-medium">Selected Customer</span>
                   <span className="font-semibold">
                     {selectedCustomer?.custCd || '—'}
                   </span>
                   <span className="ml-4 font-medium">Name</span>
                   <span className="font-semibold">
-                    {selectedCustomer?.custName || '—'}
+                    {selectedCustomer?.contactPerson || '—'}
                   </span>
                 </div>
               </div>
@@ -431,7 +501,8 @@ export default function ManageOrders() {
                     )}
                   </select>
                   <div className="mt-1 text-[10px] text-gray-600">
-                    By Name / Customer Code and date filter for order view
+                    Search by Name / Customer Code with a date filter for order
+                    view.
                   </div>
                 </div>
               </div>
@@ -441,7 +512,8 @@ export default function ManageOrders() {
             <div className="flex flex-col md:flex-row gap-6">
               <div className="md:w-1/3 space-y-2">
                 <div className="font-medium">
-                  Order Type <span className="font-normal">Regular / Express</span>
+                  Order Type{' '}
+                  <span className="font-normal">(Regular / Express)</span>
                 </div>
                 <div className="flex gap-3 mt-1">
                   <label className="inline-flex items-center gap-1">
@@ -472,7 +544,7 @@ export default function ManageOrders() {
               {selectedCustomer && (
                 <div className="flex-1">
                   <div className="font-medium mb-1">
-                    Select Shipping Address 1/2/3/..
+                    Select Shipping Address 1 / 2 / 3 / ...
                   </div>
                   <div className="grid sm:grid-cols-3 gap-2 text-[11px]">
                     {shipToOptions.map((opt) => (
@@ -512,7 +584,7 @@ export default function ManageOrders() {
                     key={idx}
                     className="grid grid-cols-12 gap-2 items-center"
                   >
-                    <div className="col-span-4 sm:col-span-3">
+                    <div className="col-span-5 sm:col-span-4">
                       <label className="block text-[10px] font-medium">
                         Product Name
                       </label>
@@ -524,9 +596,9 @@ export default function ManageOrders() {
                         placeholder="Diesel"
                       />
                     </div>
-                    <div className="col-span-4 sm:col-span-3">
+                    <div className="col-span-4 sm:col-span-4">
                       <label className="block text-[10px] font-medium">
-                        Quantity (Ltr)
+                        Quantity (L)
                       </label>
                       <input
                         name="quantity"
@@ -538,22 +610,7 @@ export default function ManageOrders() {
                         required
                       />
                     </div>
-                    <div className="col-span-4 sm:col-span-3">
-                      <label className="block text-[10px] font-medium">
-                        Rate (₹)
-                      </label>
-                      <input
-                        name="rate"
-                        type="number"
-                        min="0"
-                        step="0.01"
-                        value={item.rate}
-                        onChange={(e) => handleItemChange(idx, e)}
-                        className="w-full border border-gray-400 rounded-sm px-2 py-1 text-right"
-                        required
-                      />
-                    </div>
-                    <div className="col-span-12 sm:col-span-3 flex items-end justify-end">
+                    <div className="col-span-3 sm:col-span-4 flex items-end justify-end">
                       <button
                         type="button"
                         onClick={() => removeItem(idx)}
@@ -576,10 +633,8 @@ export default function ManageOrders() {
                   <PlusIcon size={12} /> Add Item
                 </button>
                 <div className="text-[11px] text-gray-700">
-                  <span className="font-semibold">Approx. Total: </span>₹
-                  {orderTotal.toLocaleString('en-IN', {
-                    maximumFractionDigits: 2,
-                  })}
+                  <span className="font-semibold">Total Quantity: </span>
+                  {totalQuantity} L
                 </div>
               </div>
             </div>
@@ -646,11 +701,11 @@ export default function ManageOrders() {
           </section>
         </form>
 
-        {/* Search Order bar (bottom of green area in Excel layout) */}
+        {/* Search Order bar (bottom of green area in layout) */}
         <div className="border-b border-gray-300 px-4 py-2 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2 bg-yellow-200">
-          <div className="font-semibold text-[11px]">Search Order</div>
+          <div className="font-semibold text-[11px]">Search Orders</div>
           <div className="text-[10px] text-gray-700">
-            By Order no/ Customer code / Name with date filter
+            Search by Order No. / Customer Code / Name with a date filter.
           </div>
         </div>
 
@@ -665,7 +720,7 @@ export default function ManageOrders() {
               <thead>
                 <tr className="bg-pink-200">
                   <th className="border border-gray-300 px-1 py-1 text-left">
-                    S/n
+                    S/N
                   </th>
                   <th className="border border-gray-300 px-1 py-1 text-left">
                     Order No.
@@ -677,19 +732,19 @@ export default function ManageOrders() {
                     Customer Name
                   </th>
                   <th className="border border-gray-300 px-1 py-1 text-left">
-                    Shipping Add
+                    Shipping Address
                   </th>
                   <th className="border border-gray-300 px-1 py-1 text-left">
                     Product
                   </th>
                   <th className="border border-gray-300 px-1 py-1 text-right">
-                    Qty
+                    Quantity
                   </th>
                   <th className="border border-gray-300 px-1 py-1 text-left">
                     Delivery Date
                   </th>
                   <th className="border border-gray-300 px-1 py-1 text-left">
-                    Delivery time
+                    Delivery Time
                   </th>
                   <th className="border border-gray-300 px-1 py-1 text-left">
                     Status
@@ -803,7 +858,7 @@ export default function ManageOrders() {
                         </td>
                         <td className="border border-gray-300 px-1 py-1 text-[10px]">
                           {order.status === 'Cancelled'
-                            ? 'Cancel- No storage avlble'
+                            ? 'Cancelled - No storage available'
                             : '—'}
                         </td>
                       </tr>
@@ -848,7 +903,7 @@ export default function ManageOrders() {
                   <ul className="list-disc pl-5">
                     {pendingPayload.items.map((it, i) => (
                       <li key={i}>
-                        {it.productName} — {it.quantity} × ₹{it.rate}
+                        {it.productName} — {it.quantity} L
                       </li>
                     ))}
                   </ul>
