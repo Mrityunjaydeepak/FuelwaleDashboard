@@ -34,6 +34,9 @@ export default function ManageOrders() {
   const [showConfirm, setShowConfirm] = useState(false);
   const [pendingPayload, setPendingPayload] = useState(null);
 
+  // are we editing an existing order?
+  const [editingOrderId, setEditingOrderId] = useState(null);
+
   // selected ship-to key: 'shipTo1'..'shipTo5'
   const [shipToChoice, setShipToChoice] = useState('shipTo1');
 
@@ -46,7 +49,6 @@ export default function ManageOrders() {
     let id = '';
     let type = '';
 
-    // 1) Try a stored user object: localStorage.setItem('user', JSON.stringify(user))
     const rawUser =
       localStorage.getItem('user') ||
       localStorage.getItem('currentUser') ||
@@ -71,7 +73,6 @@ export default function ManageOrders() {
       }
     }
 
-    // 2) Try simple scalar keys
     if (!id) {
       id =
         localStorage.getItem('userId') ||
@@ -219,7 +220,10 @@ export default function ManageOrders() {
   }, []);
 
   // When customer changes, pick first non-empty address (fallback to Address 1)
+  // BUT do not override when editing an existing order
   useEffect(() => {
+    if (editingOrderId) return;
+
     if (!selectedCustomer) {
       setShipToChoice('shipTo1');
       setForm((f) => ({ ...f, shipToAddress: '' }));
@@ -231,7 +235,7 @@ export default function ManageOrders() {
       setShipToChoice(firstNonEmpty.key);
       setForm((f) => ({ ...f, shipToAddress: firstNonEmpty.value }));
     }
-  }, [selectedCustomer, shipToOptions]);
+  }, [selectedCustomer, shipToOptions, editingOrderId]);
 
   // --- nav handlers -------------------------------------------------
 
@@ -312,6 +316,7 @@ export default function ManageOrders() {
 
     const deliveryTimeSlot = `${form.deliveryTimeStart} - ${form.deliveryTimeEnd}`;
     const payload = {
+      // backend probably maps this to the `customer` ObjectId
       customerId: form.customerId,
       shipToAddress: form.shipToAddress,
       orderType: form.orderType,
@@ -324,23 +329,134 @@ export default function ManageOrders() {
     setShowConfirm(true);
   };
 
+  // Handle create / update based on editingOrderId
   const confirmAndPost = async () => {
     if (!pendingPayload) return;
     setLoading(true);
     try {
-      const res = await api.post('/orders', pendingPayload);
-      // prepend new order to grid if we got something back
-      if (res?.data) {
-        setOrders((prev) => [res.data, ...prev]);
+      let res;
+      if (editingOrderId) {
+        // UPDATE existing order
+        res = await api.put(`/orders/${editingOrderId}`, pendingPayload);
+        if (res?.data) {
+          setOrders((prev) =>
+            prev.map((o) =>
+              o._id === editingOrderId ? { ...o, ...res.data } : o
+            )
+          );
+        } else {
+          // if no body, at least merge payload locally
+          setOrders((prev) =>
+            prev.map((o) =>
+              o._id === editingOrderId ? { ...o, ...pendingPayload } : o
+            )
+          );
+        }
+      } else {
+        // CREATE new order
+        res = await api.post('/orders', pendingPayload);
+        if (res?.data) {
+          setOrders((prev) => [res.data, ...prev]);
+        }
       }
+
       setForm(initialForm);
       setShipToChoice('shipTo1');
       setPendingPayload(null);
       setShowConfirm(false);
+      setEditingOrderId(null);
     } catch (err) {
-      setError(err.response?.data?.error || 'Failed to create order.');
+      setError(
+        err.response?.data?.error ||
+          (editingOrderId ? 'Failed to update order.' : 'Failed to create order.')
+      );
     } finally {
       setLoading(false);
+    }
+  };
+
+  // ---- EDIT / CANCEL handlers for order rows ------------------------
+
+  const handleEditOrder = (order) => {
+    setError('');
+    setEditingOrderId(order._id || null);
+
+    const deliveryTimeSlot = order.deliveryTimeSlot || '';
+    let deliveryTimeStart = '';
+    let deliveryTimeEnd = '';
+    if (deliveryTimeSlot.includes('-')) {
+      const [start, end] = deliveryTimeSlot.split('-');
+      deliveryTimeStart = start.trim();
+      deliveryTimeEnd = end.trim();
+    }
+
+    const customerId =
+      order.customerId ||
+      (typeof order.customer === 'object' ? order.customer?._id : order.customer) ||
+      '';
+
+    const items =
+      Array.isArray(order.items) && order.items.length > 0
+        ? order.items.map((it) => ({
+            productName: (it.productName || '').trim() || 'diesel',
+            quantity:
+              it.quantity !== undefined && it.quantity !== null
+                ? String(it.quantity)
+                : '',
+          }))
+        : [{ productName: 'diesel', quantity: '' }];
+
+    setForm({
+      customerId,
+      shipToAddress: order.shipToAddress || '',
+      items,
+      deliveryDate: order.deliveryDate
+        ? String(order.deliveryDate).slice(0, 10) // ensure yyyy-mm-dd if ISO
+        : '',
+      deliveryTimeStart,
+      deliveryTimeEnd,
+      orderType: order.orderType || 'Regular',
+    });
+
+    setShipToChoice('shipTo1');
+  };
+
+  const handleCancelOrder = async (order) => {
+    if (!order?._id) return;
+    if (!window.confirm('Are you sure you want to cancel this order?')) return;
+
+    try {
+      // according to your schema, field name is orderStatus and value is "CANCELLED"
+      const res = await api.put(`/orders/${order._id}`, {
+        orderStatus: 'CANCELLED',
+      });
+      const serverOrder = res?.data;
+
+      setOrders((prev) =>
+        prev.map((o) => {
+          if (o._id !== order._id) return o;
+
+          // merge so we don't lose existing fields
+          let merged = serverOrder
+            ? { ...o, ...serverOrder }
+            : { ...o, orderStatus: 'CANCELLED' };
+
+          // if we had a populated customer object before, and now server only sent an id,
+          // keep the populated object
+          if (
+            o.customer &&
+            typeof o.customer === 'object' &&
+            merged.customer &&
+            typeof merged.customer !== 'object'
+          ) {
+            merged.customer = o.customer;
+          }
+
+          return merged;
+        })
+      );
+    } catch (err) {
+      setError(err.response?.data?.error || 'Failed to cancel order.');
     }
   };
 
@@ -695,7 +811,13 @@ export default function ManageOrders() {
                 disabled={loading}
                 className="px-6 py-2 bg-blue-700 text-white rounded-sm text-[11px] font-semibold hover:bg-blue-800 disabled:opacity-60"
               >
-                {loading ? 'Submitting…' : 'Submit Order'}
+                {loading
+                  ? editingOrderId
+                    ? 'Updating…'
+                    : 'Submitting…'
+                  : editingOrderId
+                  ? 'Update Order'
+                  : 'Submit Order'}
               </button>
             </div>
           </section>
@@ -782,12 +904,22 @@ export default function ManageOrders() {
 
                 {!ordersLoading &&
                   orders.map((order, index) => {
-                    // 1) Try map by order.customerId
-                    const custFromMap =
-                      customerById[String(order.customerId)] || null;
-                    // 2) Fallback to populated order.customer
-                    const custObj = custFromMap || order.customer || {};
-                    // 3) Final fallback: use fields directly on order
+                    // derive a key we can use to look up from customerById
+                    const customerKey =
+                      order.customerId ??
+                      (typeof order.customer === 'object'
+                        ? order.customer?._id
+                        : order.customer);
+
+                    const custFromMap = customerKey
+                      ? customerById[String(customerKey)]
+                      : null;
+
+                    const custObj =
+                      custFromMap ||
+                      (typeof order.customer === 'object' ? order.customer : {}) ||
+                      {};
+
                     const customerCode =
                       custObj.custCd || order.custCd || '—';
                     const customerName =
@@ -803,6 +935,9 @@ export default function ManageOrders() {
                           0
                         )
                       : '';
+
+                    // Use orderStatus as per your schema, default PENDING
+                    const statusLabel = order.orderStatus || 'PENDING';
 
                     return (
                       <tr
@@ -832,32 +967,34 @@ export default function ManageOrders() {
                           {totalQty || '—'}
                         </td>
                         <td className="border border-gray-300 px-1 py-1">
-                          {order.deliveryDate || '—'}
+                          {order.deliveryDate
+                            ? String(order.deliveryDate).slice(0, 10)
+                            : '—'}
                         </td>
                         <td className="border border-gray-300 px-1 py-1">
                           {order.deliveryTimeSlot || '—'}
                         </td>
                         <td className="border border-gray-300 px-1 py-1">
-                          {order.status || 'Open'}
+                          {statusLabel}
                         </td>
                         <td className="border border-gray-300 px-1 py-1 whitespace-nowrap">
                           <button
                             type="button"
                             className="underline text-blue-700 mr-1 text-[10px]"
-                            disabled
+                            onClick={() => handleEditOrder(order)}
                           >
                             Edit
                           </button>
                           <button
                             type="button"
                             className="underline text-red-700 text-[10px]"
-                            disabled
+                            onClick={() => handleCancelOrder(order)}
                           >
                             Cancel
                           </button>
                         </td>
                         <td className="border border-gray-300 px-1 py-1 text-[10px]">
-                          {order.status === 'Cancelled'
+                          {statusLabel === 'CANCELLED'
                             ? 'Cancelled - No storage available'
                             : '—'}
                         </td>
@@ -880,10 +1017,15 @@ export default function ManageOrders() {
           <div className="relative z-10 w-[92%] max-w-md bg-white rounded-lg shadow-lg overflow-hidden text-sm">
             <div className="px-5 py-3 border-b flex items-center gap-2">
               <CheckCircle2 size={20} className="text-emerald-600" />
-              <h4 className="text-base font-semibold">Confirm Order</h4>
+              <h4 className="text-base font-semibold">
+                {editingOrderId ? 'Confirm Update' : 'Confirm Order'}
+              </h4>
             </div>
             <div className="px-5 py-4 text-xs space-y-2">
-              <p>Are you sure you want to create this order?</p>
+              <p>
+                Are you sure you want to{' '}
+                {editingOrderId ? 'update' : 'create'} this order?
+              </p>
               {pendingPayload && (
                 <div className="bg-gray-50 border rounded p-3 space-y-1">
                   <div>
@@ -925,7 +1067,13 @@ export default function ManageOrders() {
                 disabled={loading}
                 className="px-4 py-1.5 rounded bg-green-600 text-white hover:bg-green-700 disabled:opacity-50 text-xs"
               >
-                {loading ? 'Submitting…' : 'Yes, Create Order'}
+                {loading
+                  ? editingOrderId
+                    ? 'Updating…'
+                    : 'Submitting…'
+                  : editingOrderId
+                  ? 'Yes, Update Order'
+                  : 'Yes, Create Order'}
               </button>
             </div>
           </div>
