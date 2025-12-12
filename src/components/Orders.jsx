@@ -2,13 +2,7 @@
 import React, { useState, useEffect, useMemo } from 'react';
 import { useNavigate } from 'react-router-dom';
 import api from '../api';
-import {
-  ShoppingCart,
-  PlusIcon,
-  Trash2,
-  X,
-  CheckCircle2,
-} from 'lucide-react';
+import { ShoppingCart, PlusIcon, Trash2, X, CheckCircle2 } from 'lucide-react';
 
 export default function ManageOrders() {
   const navigate = useNavigate();
@@ -40,56 +34,31 @@ export default function ManageOrders() {
   // selected ship-to key: 'shipTo1'..'shipTo5'
   const [shipToChoice, setShipToChoice] = useState('shipTo1');
 
-  // logged-in user
-  const [currentUserId, setCurrentUserId] = useState('');
+  // logged-in user (from localStorage.user)
+  const [currentUserMongoId, setCurrentUserMongoId] = useState(null); // <-- use this for createdBy
+  const [currentUserId, setCurrentUserId] = useState('');             // display: md100 etc
   const [currentUserType, setCurrentUserType] = useState('');
 
-  // ---- USER INFO (tries multiple common storage patterns so it's not blank) ----
+  const isMongoObjectId = (v) => /^[a-fA-F0-9]{24}$/.test(String(v || '').trim());
+
+  // ---- USER INFO (EXACTLY your storage format) ----
   useEffect(() => {
-    let id = '';
-    let type = '';
+    const raw = localStorage.getItem('user');
+    if (!raw) return;
 
-    const rawUser =
-      localStorage.getItem('user') ||
-      localStorage.getItem('currentUser') ||
-      localStorage.getItem('loggedInUser');
+    try {
+      const u = JSON.parse(raw);
+      // your example: {"id":"6904c434da0c7e9840a873f5","userId":"md100","userType":"A","roles":[]}
+      const mongoId = u?.id;
+      const userId = u?.userId || '';
+      const userType = u?.userType || '';
 
-    if (rawUser) {
-      try {
-        const u = JSON.parse(rawUser);
-        id =
-          u.userId ||
-          u.username ||
-          u.name ||
-          u.loginId ||
-          id;
-        type =
-          u.userType ||
-          u.type ||
-          u.role ||
-          type;
-      } catch {
-        // ignore JSON errors and just fall back to simple keys
-      }
+      setCurrentUserMongoId(isMongoObjectId(mongoId) ? String(mongoId) : null);
+      setCurrentUserId(userId);
+      setCurrentUserType(userType);
+    } catch {
+      // ignore
     }
-
-    if (!id) {
-      id =
-        localStorage.getItem('userId') ||
-        localStorage.getItem('userName') ||
-        localStorage.getItem('username') ||
-        '';
-    }
-    if (!type) {
-      type =
-        localStorage.getItem('userType') ||
-        localStorage.getItem('role') ||
-        localStorage.getItem('userRole') ||
-        '';
-    }
-
-    setCurrentUserId(id);
-    setCurrentUserType(type);
   }, []);
 
   const roleLabelMap = {
@@ -106,8 +75,7 @@ export default function ManageOrders() {
   const displayName = currentUserId || 'User';
 
   const selectedCustomer = useMemo(
-    () =>
-      customers.find((c) => String(c._id) === String(form.customerId)) || null,
+    () => customers.find((c) => String(c._id) === String(form.customerId)) || null,
     [customers, form.customerId]
   );
 
@@ -180,7 +148,6 @@ export default function ManageOrders() {
 
   // --- load data ----------------------------------------------------
 
-  // Load customers
   useEffect(() => {
     let alive = true;
     api
@@ -197,7 +164,6 @@ export default function ManageOrders() {
     };
   }, []);
 
-  // Load existing orders for status grid
   useEffect(() => {
     let alive = true;
     setOrdersLoading(true);
@@ -207,9 +173,7 @@ export default function ManageOrders() {
         if (!alive) return;
         setOrders(Array.isArray(res.data) ? res.data : []);
       })
-      .catch(() => {
-        // keep silent for list errors; form errors still go via `error`
-      })
+      .catch(() => {})
       .finally(() => {
         if (alive) setOrdersLoading(false);
       });
@@ -219,8 +183,6 @@ export default function ManageOrders() {
     };
   }, []);
 
-  // When customer changes, pick first non-empty address (fallback to Address 1)
-  // BUT do not override when editing an existing order
   useEffect(() => {
     if (editingOrderId) return;
 
@@ -230,8 +192,7 @@ export default function ManageOrders() {
       return;
     }
     if (shipToOptions.length) {
-      const firstNonEmpty =
-        shipToOptions.find((o) => !o.empty) || shipToOptions[0];
+      const firstNonEmpty = shipToOptions.find((o) => !o.empty) || shipToOptions[0];
       setShipToChoice(firstNonEmpty.key);
       setForm((f) => ({ ...f, shipToAddress: firstNonEmpty.value }));
     }
@@ -239,19 +200,13 @@ export default function ManageOrders() {
 
   // --- nav handlers -------------------------------------------------
 
-  const handleHome = () => {
-    navigate('/'); // adjust if your dashboard route is different
-  };
-
-  const handleBack = () => {
-    navigate(-1);
-  };
+  const handleHome = () => navigate('/');
+  const handleBack = () => navigate(-1);
 
   const handleLogout = () => {
-    // clear whatever auth you use
     localStorage.removeItem('token');
     sessionStorage.removeItem('token');
-    navigate('/login'); // adjust to your login route
+    navigate('/login');
   };
 
   // --- form handlers -----------------------------------------------
@@ -281,7 +236,7 @@ export default function ManageOrders() {
 
   const removeItem = (idx) => {
     setForm((f) => {
-      if (f.items.length === 1) return f; // keep at least one
+      if (f.items.length === 1) return f;
       const items = f.items.filter((_, i) => i !== idx);
       return { ...f, items };
     });
@@ -315,8 +270,8 @@ export default function ManageOrders() {
       return setError('Please add at least one item with a quantity greater than 0.');
 
     const deliveryTimeSlot = `${form.deliveryTimeStart} - ${form.deliveryTimeEnd}`;
+
     const payload = {
-      // backend probably maps this to the `customer` ObjectId
       customerId: form.customerId,
       shipToAddress: form.shipToAddress,
       orderType: form.orderType,
@@ -325,35 +280,38 @@ export default function ManageOrders() {
       deliveryTimeSlot,
     };
 
+    // NEW: createdBy from localStorage.user.id (Mongo id) - only on create
+    if (!editingOrderId && currentUserMongoId) {
+      payload.createdBy = currentUserMongoId;
+    }
+
     setPendingPayload(payload);
     setShowConfirm(true);
   };
 
-  // Handle create / update based on editingOrderId
   const confirmAndPost = async () => {
     if (!pendingPayload) return;
     setLoading(true);
+
     try {
       let res;
+
       if (editingOrderId) {
-        // UPDATE existing order
-        res = await api.put(`/orders/${editingOrderId}`, pendingPayload);
+        // UPDATE existing order (never send createdBy)
+        const { createdBy, ...updatePayload } = pendingPayload || {};
+        res = await api.put(`/orders/${editingOrderId}`, updatePayload);
+
         if (res?.data) {
           setOrders((prev) =>
-            prev.map((o) =>
-              o._id === editingOrderId ? { ...o, ...res.data } : o
-            )
+            prev.map((o) => (o._id === editingOrderId ? { ...o, ...res.data } : o))
           );
         } else {
-          // if no body, at least merge payload locally
           setOrders((prev) =>
-            prev.map((o) =>
-              o._id === editingOrderId ? { ...o, ...pendingPayload } : o
-            )
+            prev.map((o) => (o._id === editingOrderId ? { ...o, ...updatePayload } : o))
           );
         }
       } else {
-        // CREATE new order
+        // CREATE new order (includes createdBy)
         res = await api.post('/orders', pendingPayload);
         if (res?.data) {
           setOrders((prev) => [res.data, ...prev]);
@@ -375,7 +333,7 @@ export default function ManageOrders() {
     }
   };
 
-  // ---- EDIT / CANCEL handlers for order rows ------------------------
+  // ---- EDIT / CANCEL handlers -------------------------------------
 
   const handleEditOrder = (order) => {
     setError('');
@@ -399,10 +357,7 @@ export default function ManageOrders() {
       Array.isArray(order.items) && order.items.length > 0
         ? order.items.map((it) => ({
             productName: (it.productName || '').trim() || 'diesel',
-            quantity:
-              it.quantity !== undefined && it.quantity !== null
-                ? String(it.quantity)
-                : '',
+            quantity: it.quantity != null ? String(it.quantity) : '',
           }))
         : [{ productName: 'diesel', quantity: '' }];
 
@@ -410,9 +365,7 @@ export default function ManageOrders() {
       customerId,
       shipToAddress: order.shipToAddress || '',
       items,
-      deliveryDate: order.deliveryDate
-        ? String(order.deliveryDate).slice(0, 10) // ensure yyyy-mm-dd if ISO
-        : '',
+      deliveryDate: order.deliveryDate ? String(order.deliveryDate).slice(0, 10) : '',
       deliveryTimeStart,
       deliveryTimeEnd,
       orderType: order.orderType || 'Regular',
@@ -426,23 +379,15 @@ export default function ManageOrders() {
     if (!window.confirm('Are you sure you want to cancel this order?')) return;
 
     try {
-      // according to your schema, field name is orderStatus and value is "CANCELLED"
-      const res = await api.put(`/orders/${order._id}`, {
-        orderStatus: 'CANCELLED',
-      });
+      const res = await api.put(`/orders/${order._id}`, { orderStatus: 'CANCELLED' });
       const serverOrder = res?.data;
 
       setOrders((prev) =>
         prev.map((o) => {
           if (o._id !== order._id) return o;
 
-          // merge so we don't lose existing fields
-          let merged = serverOrder
-            ? { ...o, ...serverOrder }
-            : { ...o, orderStatus: 'CANCELLED' };
+          let merged = serverOrder ? { ...o, ...serverOrder } : { ...o, orderStatus: 'CANCELLED' };
 
-          // if we had a populated customer object before, and now server only sent an id,
-          // keep the populated object
           if (
             o.customer &&
             typeof o.customer === 'object' &&
@@ -475,23 +420,16 @@ export default function ManageOrders() {
   return (
     <div className="min-h-screen bg-gray-100 py-4 px-2 sm:px-4">
       <div className="max-w-6xl mx-auto bg-white border border-gray-300 shadow-sm text-[11px] sm:text-xs">
-        {/* Main title */}
         <header className="border-b border-gray-300 px-4 py-3">
           <h1 className="text-center font-semibold tracking-wide text-base sm:text-lg">
             ORDER SUBMISSION BY ALL USERS &amp; STATUS UPDATE
           </h1>
         </header>
 
-        {/* Welcome + top nav */}
         <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-2 px-4 py-1.5 border-b border-gray-300 bg-gray-50">
           <div className="text-[10px] sm:text-[11px]">
             Welcome, {displayName}!
-            {roleLabel && (
-              <>
-                {' '}
-                ({roleLabel})
-              </>
-            )}
+            {roleLabel && <> ({roleLabel})</>}
           </div>
           <div className="flex gap-2 justify-end">
             <button
@@ -515,23 +453,17 @@ export default function ManageOrders() {
             >
               Log Out
             </button>
-            <button
-              type="button"
-              className="px-3 py-1 text-[10px] text-red-600 underline"
-            >
+            <button type="button" className="px-3 py-1 text-[10px] text-red-600 underline">
               Admin
             </button>
           </div>
         </div>
 
-        {/* ORDER MANAGEMENT header + top buttons */}
         <section className="border-b border-gray-300 px-4 py-4">
           <div className="text-center mb-4">
             <div className="inline-flex items-center gap-2">
               <ShoppingCart size={16} />
-              <h2 className="font-semibold text-sm sm:text-base">
-                ORDER MANAGEMENT
-              </h2>
+              <h2 className="font-semibold text-sm sm:text-base">ORDER MANAGEMENT</h2>
             </div>
           </div>
           <div className="flex flex-wrap justify-center gap-3 text-[11px]">
@@ -547,33 +479,21 @@ export default function ManageOrders() {
           </div>
         </section>
 
-        {/* FORM AREA – green block */}
         <form onSubmit={handleSubmit}>
           <section className="bg-green-100 border-b border-gray-300 px-4 py-4 space-y-4">
-            {/* mapped depot + search customer */}
             <div className="flex flex-col md:flex-row gap-4">
               <div className="flex-1 space-y-1">
                 <div className="flex gap-2 items-baseline">
                   <span className="font-medium">Mapped Depot Code</span>
-                  {/* Customer model: depotCd */}
-                  <span className="font-semibold">
-                    {selectedCustomer?.depotCd || '—'}
-                  </span>
+                  <span className="font-semibold">{selectedCustomer?.depotCd || '—'}</span>
                   <span className="ml-4 font-medium">Name</span>
-                  {/* No depotName in model, showing customer name as depot name for now */}
-                  <span className="font-semibold">
-                    {selectedCustomer?.custName || '—'}
-                  </span>
+                  <span className="font-semibold">{selectedCustomer?.custName || '—'}</span>
                 </div>
                 <div className="flex gap-2 items-baseline">
                   <span className="font-medium">Selected Customer</span>
-                  <span className="font-semibold">
-                    {selectedCustomer?.custCd || '—'}
-                  </span>
+                  <span className="font-semibold">{selectedCustomer?.custCd || '—'}</span>
                   <span className="ml-4 font-medium">Name</span>
-                  <span className="font-semibold">
-                    {selectedCustomer?.contactPerson || '—'}
-                  </span>
+                  <span className="font-semibold">{selectedCustomer?.contactPerson || '—'}</span>
                 </div>
               </div>
 
@@ -617,19 +537,16 @@ export default function ManageOrders() {
                     )}
                   </select>
                   <div className="mt-1 text-[10px] text-gray-600">
-                    Search by Name / Customer Code with a date filter for order
-                    view.
+                    Search by Name / Customer Code with a date filter for order view.
                   </div>
                 </div>
               </div>
             </div>
 
-            {/* Order type + ship to addresses */}
             <div className="flex flex-col md:flex-row gap-6">
               <div className="md:w-1/3 space-y-2">
                 <div className="font-medium">
-                  Order Type{' '}
-                  <span className="font-normal">(Regular / Express)</span>
+                  Order Type <span className="font-normal">(Regular / Express)</span>
                 </div>
                 <div className="flex gap-3 mt-1">
                   <label className="inline-flex items-center gap-1">
@@ -659,9 +576,7 @@ export default function ManageOrders() {
 
               {selectedCustomer && (
                 <div className="flex-1">
-                  <div className="font-medium mb-1">
-                    Select Shipping Address 1 / 2 / 3 / ...
-                  </div>
+                  <div className="font-medium mb-1">Select Shipping Address 1 / 2 / 3 / ...</div>
                   <div className="grid sm:grid-cols-3 gap-2 text-[11px]">
                     {shipToOptions.map((opt) => (
                       <button
@@ -675,9 +590,7 @@ export default function ManageOrders() {
                             : 'border-gray-400 bg-gray-50'
                         } ${opt.empty ? 'opacity-50 cursor-not-allowed' : ''}`}
                       >
-                        <div className="font-semibold truncate">
-                          Area {opt.label}
-                        </div>
+                        <div className="font-semibold truncate">Area {opt.label}</div>
                       </button>
                     ))}
                   </div>
@@ -691,19 +604,13 @@ export default function ManageOrders() {
               )}
             </div>
 
-            {/* Product / items line */}
             <div className="border-t border-gray-300 pt-3 space-y-2">
               <div className="font-medium mb-1">Product Details</div>
               <div className="space-y-1">
                 {form.items.map((item, idx) => (
-                  <div
-                    key={idx}
-                    className="grid grid-cols-12 gap-2 items-center"
-                  >
+                  <div key={idx} className="grid grid-cols-12 gap-2 items-center">
                     <div className="col-span-5 sm:col-span-4">
-                      <label className="block text-[10px] font-medium">
-                        Product Name
-                      </label>
+                      <label className="block text-[10px] font-medium">Product Name</label>
                       <input
                         name="productName"
                         value={item.productName}
@@ -713,9 +620,7 @@ export default function ManageOrders() {
                       />
                     </div>
                     <div className="col-span-4 sm:col-span-4">
-                      <label className="block text-[10px] font-medium">
-                        Quantity (L)
-                      </label>
+                      <label className="block text-[10px] font-medium">Quantity (L)</label>
                       <input
                         name="quantity"
                         type="number"
@@ -740,6 +645,7 @@ export default function ManageOrders() {
                   </div>
                 ))}
               </div>
+
               <div className="flex justify-between items-center mt-2">
                 <button
                   type="button"
@@ -755,12 +661,9 @@ export default function ManageOrders() {
               </div>
             </div>
 
-            {/* Delivery date & time */}
             <div className="border-t border-gray-300 pt-3 grid grid-cols-1 sm:grid-cols-3 gap-3">
               <div>
-                <label className="block text-[10px] font-medium">
-                  Delivery Date
-                </label>
+                <label className="block text-[10px] font-medium">Delivery Date</label>
                 <input
                   type="date"
                   name="deliveryDate"
@@ -771,9 +674,7 @@ export default function ManageOrders() {
                 />
               </div>
               <div>
-                <label className="block text-[10px] font-medium">
-                  Time From
-                </label>
+                <label className="block text-[10px] font-medium">Time From</label>
                 <input
                   type="time"
                   name="deliveryTimeStart"
@@ -784,9 +685,7 @@ export default function ManageOrders() {
                 />
               </div>
               <div>
-                <label className="block text-[10px] font-medium">
-                  Time To
-                </label>
+                <label className="block text-[10px] font-medium">Time To</label>
                 <input
                   type="time"
                   name="deliveryTimeEnd"
@@ -798,12 +697,7 @@ export default function ManageOrders() {
               </div>
             </div>
 
-            {/* Errors + submit */}
-            {error && (
-              <div className="mt-2 text-red-600 text-[11px] font-medium">
-                {error}
-              </div>
-            )}
+            {error && <div className="mt-2 text-red-600 text-[11px] font-medium">{error}</div>}
 
             <div className="pt-2 flex justify-center">
               <button
@@ -811,19 +705,12 @@ export default function ManageOrders() {
                 disabled={loading}
                 className="px-6 py-2 bg-blue-700 text-white rounded-sm text-[11px] font-semibold hover:bg-blue-800 disabled:opacity-60"
               >
-                {loading
-                  ? editingOrderId
-                    ? 'Updating…'
-                    : 'Submitting…'
-                  : editingOrderId
-                  ? 'Update Order'
-                  : 'Submit Order'}
+                {loading ? (editingOrderId ? 'Updating…' : 'Submitting…') : editingOrderId ? 'Update Order' : 'Submit Order'}
               </button>
             </div>
           </section>
         </form>
 
-        {/* Search Order bar (bottom of green area in layout) */}
         <div className="border-b border-gray-300 px-4 py-2 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2 bg-yellow-200">
           <div className="font-semibold text-[11px]">Search Orders</div>
           <div className="text-[10px] text-gray-700">
@@ -831,61 +718,31 @@ export default function ManageOrders() {
           </div>
         </div>
 
-        {/* ORDER STATUS GRID */}
         <section className="px-2 pb-4 pt-3">
-          <div className="mb-1 font-semibold text-[11px] px-2">
-            Order Status
-          </div>
+          <div className="mb-1 font-semibold text-[11px] px-2">Order Status</div>
 
           <div className="overflow-x-auto">
             <table className="min-w-full text-[11px] border border-gray-300">
               <thead>
                 <tr className="bg-pink-200">
-                  <th className="border border-gray-300 px-1 py-1 text-left">
-                    S/N
-                  </th>
-                  <th className="border border-gray-300 px-1 py-1 text-left">
-                    Order No.
-                  </th>
-                  <th className="border border-gray-300 px-1 py-1 text-left">
-                    Customer Code
-                  </th>
-                  <th className="border border-gray-300 px-1 py-1 text-left">
-                    Customer Name
-                  </th>
-                  <th className="border border-gray-300 px-1 py-1 text-left">
-                    Shipping Address
-                  </th>
-                  <th className="border border-gray-300 px-1 py-1 text-left">
-                    Product
-                  </th>
-                  <th className="border border-gray-300 px-1 py-1 text-right">
-                    Quantity
-                  </th>
-                  <th className="border border-gray-300 px-1 py-1 text-left">
-                    Delivery Date
-                  </th>
-                  <th className="border border-gray-300 px-1 py-1 text-left">
-                    Delivery Time
-                  </th>
-                  <th className="border border-gray-300 px-1 py-1 text-left">
-                    Status
-                  </th>
-                  <th className="border border-gray-300 px-1 py-1 text-left">
-                    Action
-                  </th>
-                  <th className="border border-gray-300 px-1 py-1 text-left">
-                    Remarks
-                  </th>
+                  <th className="border border-gray-300 px-1 py-1 text-left">S/N</th>
+                  <th className="border border-gray-300 px-1 py-1 text-left">Order No.</th>
+                  <th className="border border-gray-300 px-1 py-1 text-left">Customer Code</th>
+                  <th className="border border-gray-300 px-1 py-1 text-left">Customer Name</th>
+                  <th className="border border-gray-300 px-1 py-1 text-left">Shipping Address</th>
+                  <th className="border border-gray-300 px-1 py-1 text-left">Product</th>
+                  <th className="border border-gray-300 px-1 py-1 text-right">Quantity</th>
+                  <th className="border border-gray-300 px-1 py-1 text-left">Delivery Date</th>
+                  <th className="border border-gray-300 px-1 py-1 text-left">Delivery Time</th>
+                  <th className="border border-gray-300 px-1 py-1 text-left">Status</th>
+                  <th className="border border-gray-300 px-1 py-1 text-left">Action</th>
+                  <th className="border border-gray-300 px-1 py-1 text-left">Remarks</th>
                 </tr>
               </thead>
               <tbody>
                 {ordersLoading && (
                   <tr>
-                    <td
-                      colSpan={12}
-                      className="px-2 py-2 text-center text-gray-500"
-                    >
+                    <td colSpan={12} className="px-2 py-2 text-center text-gray-500">
                       Loading orders…
                     </td>
                   </tr>
@@ -893,10 +750,7 @@ export default function ManageOrders() {
 
                 {!ordersLoading && orders.length === 0 && (
                   <tr>
-                    <td
-                      colSpan={12}
-                      className="px-2 py-2 text-center text-gray-500"
-                    >
+                    <td colSpan={12} className="px-2 py-2 text-center text-gray-500">
                       No orders to display yet.
                     </td>
                   </tr>
@@ -904,39 +758,27 @@ export default function ManageOrders() {
 
                 {!ordersLoading &&
                   orders.map((order, index) => {
-                    // derive a key we can use to look up from customerById
                     const customerKey =
                       order.customerId ??
-                      (typeof order.customer === 'object'
-                        ? order.customer?._id
-                        : order.customer);
+                      (typeof order.customer === 'object' ? order.customer?._id : order.customer);
 
-                    const custFromMap = customerKey
-                      ? customerById[String(customerKey)]
-                      : null;
+                    const custFromMap = customerKey ? customerById[String(customerKey)] : null;
 
                     const custObj =
                       custFromMap ||
                       (typeof order.customer === 'object' ? order.customer : {}) ||
                       {};
 
-                    const customerCode =
-                      custObj.custCd || order.custCd || '—';
-                    const customerName =
-                      custObj.custName || order.custName || '—';
+                    const customerCode = custObj.custCd || order.custCd || '—';
+                    const customerName = custObj.custName || order.custName || '—';
 
                     const firstItem =
-                      Array.isArray(order.items) && order.items[0]
-                        ? order.items[0]
-                        : null;
+                      Array.isArray(order.items) && order.items[0] ? order.items[0] : null;
+
                     const totalQty = Array.isArray(order.items)
-                      ? order.items.reduce(
-                          (s, it) => s + Number(it.quantity || 0),
-                          0
-                        )
+                      ? order.items.reduce((s, it) => s + Number(it.quantity || 0), 0)
                       : '';
 
-                    // Use orderStatus as per your schema, default PENDING
                     const statusLabel = order.orderStatus || 'PENDING';
 
                     return (
@@ -944,19 +786,12 @@ export default function ManageOrders() {
                         key={order._id || index}
                         className={index % 2 === 0 ? 'bg-pink-100' : 'bg-pink-50'}
                       >
+                        <td className="border border-gray-300 px-1 py-1">{index + 1}</td>
                         <td className="border border-gray-300 px-1 py-1">
-                          {index + 1}
+                          {order.orderNo || (order._id ? order._id.slice(-6) : '—')}
                         </td>
-                        <td className="border border-gray-300 px-1 py-1">
-                          {order.orderNo ||
-                            (order._id ? order._id.slice(-6) : '—')}
-                        </td>
-                        <td className="border border-gray-300 px-1 py-1">
-                          {customerCode}
-                        </td>
-                        <td className="border border-gray-300 px-1 py-1">
-                          {customerName}
-                        </td>
+                        <td className="border border-gray-300 px-1 py-1">{customerCode}</td>
+                        <td className="border border-gray-300 px-1 py-1">{customerName}</td>
                         <td className="border border-gray-300 px-1 py-1 max-w-xs truncate">
                           {order.shipToAddress || '—'}
                         </td>
@@ -967,16 +802,12 @@ export default function ManageOrders() {
                           {totalQty || '—'}
                         </td>
                         <td className="border border-gray-300 px-1 py-1">
-                          {order.deliveryDate
-                            ? String(order.deliveryDate).slice(0, 10)
-                            : '—'}
+                          {order.deliveryDate ? String(order.deliveryDate).slice(0, 10) : '—'}
                         </td>
                         <td className="border border-gray-300 px-1 py-1">
                           {order.deliveryTimeSlot || '—'}
                         </td>
-                        <td className="border border-gray-300 px-1 py-1">
-                          {statusLabel}
-                        </td>
+                        <td className="border border-gray-300 px-1 py-1">{statusLabel}</td>
                         <td className="border border-gray-300 px-1 py-1 whitespace-nowrap">
                           <button
                             type="button"
@@ -994,9 +825,7 @@ export default function ManageOrders() {
                           </button>
                         </td>
                         <td className="border border-gray-300 px-1 py-1 text-[10px]">
-                          {statusLabel === 'CANCELLED'
-                            ? 'Cancelled - No storage available'
-                            : '—'}
+                          {statusLabel === 'CANCELLED' ? 'Cancelled - No storage available' : '—'}
                         </td>
                       </tr>
                     );
@@ -1007,7 +836,6 @@ export default function ManageOrders() {
         </section>
       </div>
 
-      {/* Confirmation Modal */}
       {showConfirm && (
         <div className="fixed inset-0 z-50 flex items-center justify-center">
           <div
@@ -1023,8 +851,7 @@ export default function ManageOrders() {
             </div>
             <div className="px-5 py-4 text-xs space-y-2">
               <p>
-                Are you sure you want to{' '}
-                {editingOrderId ? 'update' : 'create'} this order?
+                Are you sure you want to {editingOrderId ? 'update' : 'create'} this order?
               </p>
               {pendingPayload && (
                 <div className="bg-gray-50 border rounded p-3 space-y-1">
@@ -1033,14 +860,18 @@ export default function ManageOrders() {
                     {selectedCustomer?.custCd} — {selectedCustomer?.custName}
                   </div>
                   <div>
-                    <span className="font-medium">Type:</span>{' '}
-                    {pendingPayload.orderType}
+                    <span className="font-medium">Type:</span> {pendingPayload.orderType}
                   </div>
                   <div>
-                    <span className="font-medium">Delivery:</span>{' '}
-                    {pendingPayload.deliveryDate} (
+                    <span className="font-medium">Delivery:</span> {pendingPayload.deliveryDate} (
                     {pendingPayload.deliveryTimeSlot})
                   </div>
+                  {!editingOrderId && (
+                    <div>
+                      <span className="font-medium">Created By (user.id):</span>{' '}
+                      {currentUserMongoId || '—'}
+                    </div>
+                  )}
                   <div className="font-medium">Items:</div>
                   <ul className="list-disc pl-5">
                     {pendingPayload.items.map((it, i) => (
@@ -1067,13 +898,7 @@ export default function ManageOrders() {
                 disabled={loading}
                 className="px-4 py-1.5 rounded bg-green-600 text-white hover:bg-green-700 disabled:opacity-50 text-xs"
               >
-                {loading
-                  ? editingOrderId
-                    ? 'Updating…'
-                    : 'Submitting…'
-                  : editingOrderId
-                  ? 'Yes, Update Order'
-                  : 'Yes, Create Order'}
+                {loading ? (editingOrderId ? 'Updating…' : 'Submitting…') : editingOrderId ? 'Yes, Update Order' : 'Yes, Create Order'}
               </button>
             </div>
           </div>
