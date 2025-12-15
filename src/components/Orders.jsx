@@ -35,11 +35,31 @@ export default function ManageOrders() {
   const [shipToChoice, setShipToChoice] = useState('shipTo1');
 
   // logged-in user (from localStorage.user)
-  const [currentUserMongoId, setCurrentUserMongoId] = useState(null); // <-- use this for createdBy
-  const [currentUserId, setCurrentUserId] = useState('');             // display: md100 etc
+  const [currentUserMongoId, setCurrentUserMongoId] = useState(null); // user collection id (NOT Employee id)
+  const [currentUserId, setCurrentUserId] = useState('');             // code: md100 etc
   const [currentUserType, setCurrentUserType] = useState('');
 
+  // ---- Order list filters -----------------------------------------
+  const [searchText, setSearchText] = useState('');
+  const [dateFrom, setDateFrom] = useState(''); // default today
+  const [dateTo, setDateTo] = useState('');     // default today
+  const [employeeFilter, setEmployeeFilter] = useState(''); // filter by employee code
+
   const isMongoObjectId = (v) => /^[a-fA-F0-9]{24}$/.test(String(v || '').trim());
+
+  const formatYMDLocal = (d) => {
+    const yyyy = d.getFullYear();
+    const mm = String(d.getMonth() + 1).padStart(2, '0');
+    const dd = String(d.getDate()).padStart(2, '0');
+    return `${yyyy}-${mm}-${dd}`;
+  };
+
+  // default date filter = today
+  useEffect(() => {
+    const today = formatYMDLocal(new Date());
+    setDateFrom(today);
+    setDateTo(today);
+  }, []);
 
   // ---- USER INFO (EXACTLY your storage format) ----
   useEffect(() => {
@@ -48,7 +68,6 @@ export default function ManageOrders() {
 
     try {
       const u = JSON.parse(raw);
-      // your example: {"id":"6904c434da0c7e9840a873f5","userId":"md100","userType":"A","roles":[]}
       const mongoId = u?.id;
       const userId = u?.userId || '';
       const userType = u?.userType || '';
@@ -73,6 +92,7 @@ export default function ManageOrders() {
 
   const roleLabel = roleLabelMap[currentUserType] || '';
   const displayName = currentUserId || 'User';
+  const isAdmin = currentUserType === 'A';
 
   const selectedCustomer = useMemo(
     () => customers.find((c) => String(c._id) === String(form.customerId)) || null,
@@ -278,12 +298,13 @@ export default function ManageOrders() {
       items: cleanedItems,
       deliveryDate: form.deliveryDate,
       deliveryTimeSlot,
+
+      // IMPORTANT: save employee CODE on order (backend uses this to fetch empName)
+      empCd: currentUserId || '',
     };
 
-    // NEW: createdBy from localStorage.user.id (Mongo id) - only on create
-    if (!editingOrderId && currentUserMongoId) {
-      payload.createdBy = currentUserMongoId;
-    }
+    // IMPORTANT: DO NOT send createdBy=user.id (that is User _id, not Employee _id)
+    // if (!editingOrderId && currentUserMongoId) payload.createdBy = currentUserMongoId;
 
     setPendingPayload(payload);
     setShowConfirm(true);
@@ -311,7 +332,7 @@ export default function ManageOrders() {
           );
         }
       } else {
-        // CREATE new order (includes createdBy)
+        // CREATE new order
         res = await api.post('/orders', pendingPayload);
         if (res?.data) {
           setOrders((prev) => [res.data, ...prev]);
@@ -333,7 +354,7 @@ export default function ManageOrders() {
     }
   };
 
-  // ---- EDIT / CANCEL handlers -------------------------------------
+  // ---- EDIT handler -----------------------------------------------
 
   const handleEditOrder = (order) => {
     setError('');
@@ -374,19 +395,22 @@ export default function ManageOrders() {
     setShipToChoice('shipTo1');
   };
 
-  const handleCancelOrder = async (order) => {
+  // ---- Status update (Admin: Complete / Cancel) --------------------
+  const handleSetOrderStatus = async (order, status) => {
     if (!order?._id) return;
-    if (!window.confirm('Are you sure you want to cancel this order?')) return;
+
+    const label = status === 'COMPLETED' ? 'complete' : 'cancel';
+    if (!window.confirm(`Are you sure you want to ${label} this order?`)) return;
 
     try {
-      const res = await api.put(`/orders/${order._id}`, { orderStatus: 'CANCELLED' });
+      const res = await api.put(`/orders/${order._id}`, { orderStatus: status });
       const serverOrder = res?.data;
 
       setOrders((prev) =>
         prev.map((o) => {
           if (o._id !== order._id) return o;
 
-          let merged = serverOrder ? { ...o, ...serverOrder } : { ...o, orderStatus: 'CANCELLED' };
+          let merged = serverOrder ? { ...o, ...serverOrder } : { ...o, orderStatus: status };
 
           if (
             o.customer &&
@@ -397,11 +421,20 @@ export default function ManageOrders() {
             merged.customer = o.customer;
           }
 
+          if (
+            o.createdBy &&
+            typeof o.createdBy === 'object' &&
+            merged.createdBy &&
+            typeof merged.createdBy !== 'object'
+          ) {
+            merged.createdBy = o.createdBy;
+          }
+
           return merged;
         })
       );
     } catch (err) {
-      setError(err.response?.data?.error || 'Failed to cancel order.');
+      setError(err.response?.data?.error || `Failed to update order status (${status}).`);
     }
   };
 
@@ -414,6 +447,311 @@ export default function ManageOrders() {
       return sum + (isFinite(q) ? q : 0);
     }, 0);
   }, [form.items]);
+
+  // ---- Helpers: Sales Employee label + filter ----------------------
+
+  const getCreatedByKey = (order) => {
+    // Prefer backend-enriched code
+    const code = order?.createdByUserId || order?.empCd || '';
+    return String(code || '').trim();
+  };
+
+  const getCreatedByLabel = (order) => {
+    // Prefer backend-enriched fields from GET /orders
+    const code = (order?.createdByUserId || order?.empCd || '').toString().trim();
+    const name = (order?.createdByName || '').toString().trim();
+
+    if (code || name) return [code, name].filter(Boolean).join(' — ').trim();
+
+    // fallback if backend sends populated createdBy
+    const cb = order?.createdBy;
+    if (cb && typeof cb === 'object') {
+      const c = cb.empCd || cb.userId || cb.code || '';
+      const n = cb.empName || cb.name || cb.fullName || '';
+      return [c, n].filter(Boolean).join(' — ').trim() || '—';
+    }
+
+    return '—';
+  };
+
+  const employeeOptions = useMemo(() => {
+    const map = new Map(); // code -> label
+    orders.forEach((o) => {
+      const key = getCreatedByKey(o);
+      const label = getCreatedByLabel(o);
+      if (key && !map.has(key)) map.set(key, label);
+    });
+    return Array.from(map.entries())
+      .map(([key, label]) => ({ key, label }))
+      .sort((a, b) => a.label.localeCompare(b.label));
+  }, [orders]);
+
+  // ---- Filtered Orders ---------------------------------------------
+  const filteredOrders = useMemo(() => {
+    const q = String(searchText || '').trim().toLowerCase();
+    const from = dateFrom || '';
+    const to = dateTo || '';
+    const emp = employeeFilter || '';
+
+    const inRange = (ymd) => {
+      if (!ymd) return false;
+      if (from && ymd < from) return false;
+      if (to && ymd > to) return false;
+      return true;
+    };
+
+    return orders.filter((order) => {
+      const customerKey =
+        order.customerId ??
+        (typeof order.customer === 'object' ? order.customer?._id : order.customer);
+
+      const custFromMap = customerKey ? customerById[String(customerKey)] : null;
+      const custObj =
+        custFromMap ||
+        (typeof order.customer === 'object' ? order.customer : {}) ||
+        {};
+
+      const customerCode = (custObj.custCd || order.custCd || '').toString();
+      const customerName = (custObj.custName || order.custName || '').toString();
+      const orderNo = (order.orderNo || (order._id ? order._id.slice(-6) : '')).toString();
+
+      const deliveryYMD = order.deliveryDate ? String(order.deliveryDate).slice(0, 10) : '';
+
+      if ((from || to) && !inRange(deliveryYMD)) return false;
+
+      if (emp) {
+        const key = getCreatedByKey(order);
+        if (String(key) !== String(emp)) return false;
+      }
+
+      if (q) {
+        const hay = [
+          orderNo,
+          customerCode,
+          customerName,
+          (order.shipToAddress || '').toString(),
+          (getCreatedByLabel(order) || '').toString(),
+        ]
+          .join(' | ')
+          .toLowerCase();
+        if (!hay.includes(q)) return false;
+      }
+
+      return true;
+    });
+  }, [orders, customerById, searchText, dateFrom, dateTo, employeeFilter]);
+
+  // ---- Export ------------------------------------------------------
+
+  const escapeHtml = (s) =>
+    String(s ?? '')
+      .replaceAll('&', '&amp;')
+      .replaceAll('<', '&lt;')
+      .replaceAll('>', '&gt;')
+      .replaceAll('"', '&quot;')
+      .replaceAll("'", '&#039;');
+
+  const downloadBlob = (blob, filename) => {
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = filename;
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    URL.revokeObjectURL(url);
+  };
+
+  const exportToExcelCSV = () => {
+    const rows = filteredOrders.map((order, index) => {
+      const customerKey =
+        order.customerId ??
+        (typeof order.customer === 'object' ? order.customer?._id : order.customer);
+
+      const custFromMap = customerKey ? customerById[String(customerKey)] : null;
+      const custObj =
+        custFromMap ||
+        (typeof order.customer === 'object' ? order.customer : {}) ||
+        {};
+
+      const customerCode = custObj.custCd || order.custCd || '—';
+      const customerName = custObj.custName || order.custName || '—';
+
+      const itemsText = Array.isArray(order.items)
+        ? order.items
+            .map((it) => `${it.productName || 'item'}(${Number(it.quantity || 0)})`)
+            .join(', ')
+        : '';
+
+      const totalQty = Array.isArray(order.items)
+        ? order.items.reduce((s, it) => s + Number(it.quantity || 0), 0)
+        : '';
+
+      return {
+        sn: index + 1,
+        orderNo: order.orderNo || (order._id ? order._id.slice(-6) : '—'),
+        customerCode,
+        customerName,
+        salesEmployee: getCreatedByLabel(order),
+        shipToAddress: order.shipToAddress || '—',
+        items: itemsText || '—',
+        totalQty: totalQty || '—',
+        deliveryDate: order.deliveryDate ? String(order.deliveryDate).slice(0, 10) : '—',
+        deliveryTime: order.deliveryTimeSlot || '—',
+        status: order.orderStatus || 'PENDING',
+      };
+    });
+
+    const headers = [
+      'S/N',
+      'Order No',
+      'Customer Code',
+      'Customer Name',
+      'Sales Employee',
+      'Shipping Address',
+      'Items',
+      'Total Qty',
+      'Delivery Date',
+      'Delivery Time',
+      'Status',
+    ];
+
+    const csvEscape = (v) => {
+      const s = String(v ?? '');
+      if (s.includes('"') || s.includes(',') || s.includes('\n') || s.includes('\r')) {
+        return `"${s.replaceAll('"', '""')}"`;
+      }
+      return s;
+    };
+
+    const csv = [
+      headers.join(','),
+      ...rows.map((r) =>
+        [
+          r.sn,
+          r.orderNo,
+          r.customerCode,
+          r.customerName,
+          r.salesEmployee,
+          r.shipToAddress,
+          r.items,
+          r.totalQty,
+          r.deliveryDate,
+          r.deliveryTime,
+          r.status,
+        ]
+          .map(csvEscape)
+          .join(',')
+      ),
+    ].join('\n');
+
+    const stamp = formatYMDLocal(new Date());
+    downloadBlob(new Blob([csv], { type: 'text/csv;charset=utf-8' }), `orders_${stamp}.csv`);
+  };
+
+  const exportToPDF = () => {
+    const stamp = formatYMDLocal(new Date());
+    const title = `Orders Export (${stamp})`;
+
+    const htmlRows = filteredOrders
+      .map((order, index) => {
+        const customerKey =
+          order.customerId ??
+          (typeof order.customer === 'object' ? order.customer?._id : order.customer);
+
+        const custFromMap = customerKey ? customerById[String(customerKey)] : null;
+        const custObj =
+          custFromMap ||
+          (typeof order.customer === 'object' ? order.customer : {}) ||
+          {};
+
+        const customerCode = custObj.custCd || order.custCd || '—';
+        const customerName = custObj.custName || order.custName || '—';
+
+        const itemsText = Array.isArray(order.items)
+          ? order.items.map((it) => `${it.productName || 'item'}(${Number(it.quantity || 0)})`).join(', ')
+          : '—';
+
+        const totalQty = Array.isArray(order.items)
+          ? order.items.reduce((s, it) => s + Number(it.quantity || 0), 0)
+          : '—';
+
+        return `
+          <tr>
+            <td>${escapeHtml(index + 1)}</td>
+            <td>${escapeHtml(order.orderNo || (order._id ? order._id.slice(-6) : '—'))}</td>
+            <td>${escapeHtml(customerCode)}</td>
+            <td>${escapeHtml(customerName)}</td>
+            <td>${escapeHtml(getCreatedByLabel(order))}</td>
+            <td>${escapeHtml(order.shipToAddress || '—')}</td>
+            <td>${escapeHtml(itemsText)}</td>
+            <td style="text-align:right">${escapeHtml(totalQty)}</td>
+            <td>${escapeHtml(order.deliveryDate ? String(order.deliveryDate).slice(0, 10) : '—')}</td>
+            <td>${escapeHtml(order.deliveryTimeSlot || '—')}</td>
+            <td>${escapeHtml(order.orderStatus || 'PENDING')}</td>
+          </tr>
+        `;
+      })
+      .join('');
+
+    const w = window.open('', '_blank');
+    if (!w) {
+      setError('Popup blocked. Please allow popups to export PDF.');
+      return;
+    }
+
+    w.document.open();
+    w.document.write(`
+      <!doctype html>
+      <html>
+        <head>
+          <meta charset="utf-8" />
+          <title>${escapeHtml(title)}</title>
+          <style>
+            body { font-family: Arial, sans-serif; font-size: 11px; padding: 12px; }
+            h1 { font-size: 14px; margin: 0 0 10px; }
+            .meta { margin-bottom: 10px; color: #444; }
+            table { width: 100%; border-collapse: collapse; }
+            th, td { border: 1px solid #999; padding: 4px 6px; vertical-align: top; }
+            th { background: #f0f0f0; text-align: left; }
+            @media print { button { display: none; } }
+          </style>
+        </head>
+        <body>
+          <h1>${escapeHtml(title)}</h1>
+          <div class="meta">
+            Filters: Date ${escapeHtml(dateFrom || '—')} to ${escapeHtml(dateTo || '—')},
+            Employee ${escapeHtml(employeeFilter ? (employeeOptions.find(o=>o.key===employeeFilter)?.label || employeeFilter) : 'All')},
+            Search "${escapeHtml(searchText || '')}"
+          </div>
+          <table>
+            <thead>
+              <tr>
+                <th>S/N</th>
+                <th>Order No</th>
+                <th>Customer Code</th>
+                <th>Customer Name</th>
+                <th>Sales Employee</th>
+                <th>Shipping Address</th>
+                <th>Items</th>
+                <th>Total Qty</th>
+                <th>Delivery Date</th>
+                <th>Delivery Time</th>
+                <th>Status</th>
+              </tr>
+            </thead>
+            <tbody>
+              ${htmlRows || `<tr><td colspan="11" style="text-align:center;color:#666;">No orders to export.</td></tr>`}
+            </tbody>
+          </table>
+          <script>
+            window.onload = function() { window.focus(); window.print(); };
+          </script>
+        </body>
+      </html>
+    `);
+    w.document.close();
+  };
 
   // --- render -------------------------------------------------------
 
@@ -711,10 +1049,100 @@ export default function ManageOrders() {
           </section>
         </form>
 
-        <div className="border-b border-gray-300 px-4 py-2 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2 bg-yellow-200">
-          <div className="font-semibold text-[11px]">Search Orders</div>
-          <div className="text-[10px] text-gray-700">
-            Search by Order No. / Customer Code / Name with a date filter.
+        {/* SEARCH + FILTERS + EXPORT */}
+        <div className="border-b border-gray-300 px-4 py-2 bg-yellow-200">
+          <div className="flex flex-col gap-2">
+            <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2">
+              <div className="font-semibold text-[11px]">Search Orders</div>
+              <div className="text-[10px] text-gray-700">
+                Default view shows today’s orders. Use date range / employee / search to filter.
+              </div>
+            </div>
+
+            <div className="grid grid-cols-1 sm:grid-cols-12 gap-2 items-end">
+              <div className="sm:col-span-4">
+                <label className="block text-[10px] font-medium">Search (Order No / Customer / Address / Employee)</label>
+                <input
+                  value={searchText}
+                  onChange={(e) => setSearchText(e.target.value)}
+                  className="w-full border border-gray-400 rounded-sm px-2 py-1 bg-white"
+                  placeholder="Type to search…"
+                />
+              </div>
+
+              <div className="sm:col-span-2">
+                <label className="block text-[10px] font-medium">From</label>
+                <input
+                  type="date"
+                  value={dateFrom}
+                  onChange={(e) => setDateFrom(e.target.value)}
+                  className="w-full border border-gray-400 rounded-sm px-2 py-1 bg-white"
+                />
+              </div>
+
+              <div className="sm:col-span-2">
+                <label className="block text-[10px] font-medium">To</label>
+                <input
+                  type="date"
+                  value={dateTo}
+                  onChange={(e) => setDateTo(e.target.value)}
+                  className="w-full border border-gray-400 rounded-sm px-2 py-1 bg-white"
+                />
+              </div>
+
+              <div className="sm:col-span-3">
+                <label className="block text-[10px] font-medium">Sales Employee (Code — Name)</label>
+                <select
+                  value={employeeFilter}
+                  onChange={(e) => setEmployeeFilter(e.target.value)}
+                  className="w-full border border-gray-400 rounded-sm px-2 py-1 bg-white"
+                >
+                  <option value="">All</option>
+                  {employeeOptions.map((opt) => (
+                    <option key={opt.key} value={opt.key}>
+                      {opt.label}
+                    </option>
+                  ))}
+                </select>
+              </div>
+
+              <div className="sm:col-span-1 flex gap-2">
+                <button
+                  type="button"
+                  onClick={() => {
+                    const today = formatYMDLocal(new Date());
+                    setSearchText('');
+                    setEmployeeFilter('');
+                    setDateFrom(today);
+                    setDateTo(today);
+                  }}
+                  className="w-full px-3 py-1 border border-gray-400 rounded-sm bg-white hover:bg-gray-50 text-[10px]"
+                  title="Reset to today"
+                >
+                  Reset
+                </button>
+              </div>
+
+              <div className="sm:col-span-12 flex flex-wrap gap-2 justify-end pt-1">
+                <div className="text-[10px] text-gray-700 mr-auto">
+                  Showing <span className="font-semibold">{filteredOrders.length}</span> order(s)
+                </div>
+                <button
+                  type="button"
+                  onClick={exportToPDF}
+                  className="px-3 py-1 border border-gray-400 rounded-sm bg-white hover:bg-gray-50 text-[10px]"
+                >
+                  Export PDF
+                </button>
+                <button
+                  type="button"
+                  onClick={exportToExcelCSV}
+                  className="px-3 py-1 border border-gray-400 rounded-sm bg-white hover:bg-gray-50 text-[10px]"
+                >
+                  Export Excel
+                </button>
+              </div>
+            </div>
           </div>
         </div>
 
@@ -729,6 +1157,7 @@ export default function ManageOrders() {
                   <th className="border border-gray-300 px-1 py-1 text-left">Order No.</th>
                   <th className="border border-gray-300 px-1 py-1 text-left">Customer Code</th>
                   <th className="border border-gray-300 px-1 py-1 text-left">Customer Name</th>
+                  <th className="border border-gray-300 px-1 py-1 text-left">Sales Employee</th>
                   <th className="border border-gray-300 px-1 py-1 text-left">Shipping Address</th>
                   <th className="border border-gray-300 px-1 py-1 text-left">Product</th>
                   <th className="border border-gray-300 px-1 py-1 text-right">Quantity</th>
@@ -742,22 +1171,22 @@ export default function ManageOrders() {
               <tbody>
                 {ordersLoading && (
                   <tr>
-                    <td colSpan={12} className="px-2 py-2 text-center text-gray-500">
+                    <td colSpan={13} className="px-2 py-2 text-center text-gray-500">
                       Loading orders…
                     </td>
                   </tr>
                 )}
 
-                {!ordersLoading && orders.length === 0 && (
+                {!ordersLoading && filteredOrders.length === 0 && (
                   <tr>
-                    <td colSpan={12} className="px-2 py-2 text-center text-gray-500">
-                      No orders to display yet.
+                    <td colSpan={13} className="px-2 py-2 text-center text-gray-500">
+                      No orders to display for the selected filters.
                     </td>
                   </tr>
                 )}
 
                 {!ordersLoading &&
-                  orders.map((order, index) => {
+                  filteredOrders.map((order, index) => {
                     const customerKey =
                       order.customerId ??
                       (typeof order.customer === 'object' ? order.customer?._id : order.customer);
@@ -780,6 +1209,7 @@ export default function ManageOrders() {
                       : '';
 
                     const statusLabel = order.orderStatus || 'PENDING';
+                    const salesEmployeeLabel = getCreatedByLabel(order);
 
                     return (
                       <tr
@@ -792,6 +1222,7 @@ export default function ManageOrders() {
                         </td>
                         <td className="border border-gray-300 px-1 py-1">{customerCode}</td>
                         <td className="border border-gray-300 px-1 py-1">{customerName}</td>
+                        <td className="border border-gray-300 px-1 py-1">{salesEmployeeLabel}</td>
                         <td className="border border-gray-300 px-1 py-1 max-w-xs truncate">
                           {order.shipToAddress || '—'}
                         </td>
@@ -811,21 +1242,50 @@ export default function ManageOrders() {
                         <td className="border border-gray-300 px-1 py-1 whitespace-nowrap">
                           <button
                             type="button"
-                            className="underline text-blue-700 mr-1 text-[10px]"
+                            className="underline text-blue-700 mr-2 text-[10px]"
                             onClick={() => handleEditOrder(order)}
                           >
                             Edit
                           </button>
-                          <button
-                            type="button"
-                            className="underline text-red-700 text-[10px]"
-                            onClick={() => handleCancelOrder(order)}
-                          >
-                            Cancel
-                          </button>
+
+                          {isAdmin ? (
+                            <>
+                              <button
+                                type="button"
+                                className="underline text-emerald-700 mr-2 text-[10px]"
+                                onClick={() => handleSetOrderStatus(order, 'COMPLETED')}
+                                disabled={statusLabel === 'COMPLETED'}
+                                title="Mark as COMPLETED"
+                              >
+                                Complete
+                              </button>
+                              <button
+                                type="button"
+                                className="underline text-red-700 text-[10px]"
+                                onClick={() => handleSetOrderStatus(order, 'CANCELLED')}
+                                disabled={statusLabel === 'CANCELLED'}
+                                title="Mark as CANCELLED"
+                              >
+                                Cancel
+                              </button>
+                            </>
+                          ) : (
+                            <button
+                              type="button"
+                              className="underline text-red-700 text-[10px]"
+                              onClick={() => handleSetOrderStatus(order, 'CANCELLED')}
+                              disabled={statusLabel === 'CANCELLED'}
+                            >
+                              Cancel
+                            </button>
+                          )}
                         </td>
                         <td className="border border-gray-300 px-1 py-1 text-[10px]">
-                          {statusLabel === 'CANCELLED' ? 'Cancelled - No storage available' : '—'}
+                          {statusLabel === 'CANCELLED'
+                            ? 'Cancelled'
+                            : statusLabel === 'COMPLETED'
+                            ? 'Completed'
+                            : '—'}
                         </td>
                       </tr>
                     );
@@ -868,8 +1328,8 @@ export default function ManageOrders() {
                   </div>
                   {!editingOrderId && (
                     <div>
-                      <span className="font-medium">Created By (user.id):</span>{' '}
-                      {currentUserMongoId || '—'}
+                      <span className="font-medium">Employee Code (empCd):</span>{' '}
+                      {pendingPayload.empCd || '—'}
                     </div>
                   )}
                   <div className="font-medium">Items:</div>
