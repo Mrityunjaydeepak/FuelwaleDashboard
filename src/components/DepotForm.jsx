@@ -1,87 +1,250 @@
-import React, { useState, useEffect } from 'react';
+// DepotManagement.jsx
+import React, { useEffect, useMemo, useState } from 'react';
+import { useNavigate } from 'react-router-dom';
 import api from '../api';
-import { PlusIcon, Edit2Icon, SaveIcon, XIcon, Trash2Icon, SearchIcon } from 'lucide-react';
+import { Search, X, Home, ArrowLeft, LogOut } from 'lucide-react';
+
+function safeJwtDecode(token) {
+  try {
+    const part = token.split('.')[1];
+    const base64 = part.replace(/-/g, '+').replace(/_/g, '/');
+    const json = decodeURIComponent(
+      atob(base64)
+        .split('')
+        .map(c => '%' + ('00' + c.charCodeAt(0).toString(16)).slice(-2))
+        .join('')
+    );
+    return JSON.parse(json);
+  } catch {
+    return null;
+  }
+}
+
+const GSTIN_REGEX = /^[0-9]{2}[A-Z]{5}[0-9]{4}[A-Z]{1}[1-9A-Z]{1}Z[0-9A-Z]{1}$/;
+const DEPOTCD_REGEX = /^[0-9]{1,3}$/;
+const STATECD_REGEX = /^[0-9]{2}$/;
+const CONTACT_REGEX = /^[0-9]{10}$/;
+const EMAIL_REGEX = /^\S+@\S+\.\S+$/;
+
+function normalizeTrim(s) {
+  return String(s ?? '').trim();
+}
+function normalizeUpperTrim(s) {
+  return normalizeTrim(s).toUpperCase();
+}
+function optionalTrim(s) {
+  const t = normalizeTrim(s);
+  return t ? t : undefined;
+}
+function optionalUpperTrim(s) {
+  const t = normalizeUpperTrim(s);
+  return t ? t : undefined;
+}
+function toIntOrUndef(v) {
+  const t = normalizeTrim(v);
+  if (!t) return undefined;
+  const n = parseInt(t, 10);
+  return Number.isFinite(n) ? n : undefined;
+}
+
+function friendlyApiError(err) {
+  const msg =
+    err?.response?.data?.error ||
+    err?.response?.data?.message ||
+    err?.message ||
+    'Save failed';
+
+  // Common Mongo duplicate key patterns: E11000 ... dup key: { field: "value" }
+  if (typeof msg === 'string' && msg.includes('E11000')) {
+    const fieldMatch = msg.match(/dup key.*\{\s*([a-zA-Z0-9_]+)\s*:/);
+    const valMatch = msg.match(/dup key.*:\s*"?([^"}]+)"?\s*\}/);
+    const field = fieldMatch?.[1];
+    const value = valMatch?.[1];
+
+    if (field) {
+      const prettyField =
+        {
+          depotCd: 'Depot Code',
+          depotName: 'Depot Name',
+          gstin: 'GSTIN',
+          contactNo: 'Contact No.',
+          email: 'E-Mail',
+        }[field] || field;
+
+      return value
+        ? `${prettyField} must be unique. "${value}" already exists.`
+        : `${prettyField} must be unique. The value already exists.`;
+    }
+    return 'Duplicate value detected. One of the unique fields already exists.';
+  }
+
+  return msg;
+}
 
 export default function DepotManagement() {
+  const navigate = useNavigate();
+
   const initial = {
     depotCd: '',
     depotName: '',
+
+    gstin: '',
+    contactNo: '',
+    email: '',
+    contactName: '',
+    status: 'Active', // Backend enum: Active / Inactive
+
     depotAdd1: '',
     depotAdd2: '',
     depotAdd3: '',
     depotArea: '',
     city: '',
     pin: '',
-    stateCd: ''
+    stateCd: '',
   };
 
-  const [form, setForm]         = useState(initial);
-  const [depots, setDepots]     = useState([]);
-  const [loading, setLoading]   = useState(false);
-  const [savingId, setSavingId] = useState(null);
-  const [error, setError]       = useState('');
-  const [info, setInfo]         = useState('');
-  const [search, setSearch]     = useState('');
+  const [currentUserId, setCurrentUserId] = useState('');
+  const [currentUserType, setCurrentUserType] = useState('');
 
-  // inline edit
-  const [editingId, setEditingId] = useState(null);
-  const [editForm, setEditForm]   = useState(initial);
+  const [form, setForm] = useState(initial);
+  const [depots, setDepots] = useState([]);
+  const [loading, setLoading] = useState(false);
+  const [listLoading, setListLoading] = useState(false);
 
-  // ───────────────── helpers
-  const normalizeCd = s => String(s || '').trim().toUpperCase();
-  const toNumOrUndef = v => (v === '' || v == null ? undefined : parseInt(v, 10));
+  const [error, setError] = useState('');
+  const [info, setInfo] = useState('');
+
+  const [showSearch, setShowSearch] = useState(false);
+  const [searchTerm, setSearchTerm] = useState('');
+
+  const isAdmin = useMemo(() => currentUserType === 'A', [currentUserType]);
 
   const loadDepots = async () => {
-    const res = await api.get('/depots');
-    setDepots(res.data || []);
+    setListLoading(true);
+    try {
+      const res = await api.get('/depots');
+      setDepots(Array.isArray(res.data) ? res.data : []);
+    } finally {
+      setListLoading(false);
+    }
   };
 
   useEffect(() => {
+    const token =
+      localStorage.getItem('token') ||
+      localStorage.getItem('authToken') ||
+      sessionStorage.getItem('token');
+
+    const payload = token ? safeJwtDecode(token) : null;
+    setCurrentUserId(payload?.userId || '');
+    setCurrentUserType(payload?.userType || '');
+
     loadDepots().catch(() => setError('Failed to load depots'));
+    // eslint-disable-next-line
   }, []);
+
+  const filteredDepots = useMemo(() => {
+    const q = searchTerm.trim().toLowerCase();
+    if (!q) return depots;
+
+    return depots.filter(d => {
+      const fields = [
+        d.depotCd,
+        d.depotName,
+        d.city,
+        d.depotArea,
+        d.stateCd,
+        d.gstin,
+        d.contactNo,
+        d.email,
+        d.contactName,
+        d.status,
+        d.pin,
+      ].map(x => String(x ?? '').toLowerCase());
+
+      return fields.some(v => v.includes(q));
+    });
+  }, [depots, searchTerm]);
 
   const handleChange = e => {
     const { name, value } = e.target;
+
+    const upperFields = new Set(['depotCd', 'stateCd', 'gstin']);
     setForm(f => ({
       ...f,
-      [name]: name === 'depotCd' || name === 'stateCd' ? value.toUpperCase() : value
+      [name]: upperFields.has(name) ? value.toUpperCase() : value,
     }));
+
     setError('');
     setInfo('');
   };
 
-  const handleSubmit = async e => {
-    e.preventDefault();
+  function validateClient(payload) {
+    // Required
+    if (!payload.depotCd || !payload.depotName) return 'Depot Code and Depot Name are required';
+
+    // depotCd: up to 3 digits (based on maxlength 3)
+    if (!DEPOTCD_REGEX.test(payload.depotCd)) return 'Depot Code must be 1 to 3 digits (e.g., 271)';
+
+    // Optional validations only if provided
+    if (payload.stateCd && !STATECD_REGEX.test(payload.stateCd))
+      return 'State Code must be 2 digits (e.g., 27)';
+
+    if (payload.gstin && !GSTIN_REGEX.test(payload.gstin)) return 'Invalid GSTIN format';
+
+    if (payload.contactNo && !CONTACT_REGEX.test(payload.contactNo))
+      return 'Contact No. must be exactly 10 digits';
+
+    if (payload.email && !EMAIL_REGEX.test(payload.email)) return 'Invalid email format';
+
+    if (payload.pin != null && !Number.isFinite(payload.pin)) return 'PIN must be a valid number';
+
+    // Status must match backend enum
+    if (payload.status && !['Active', 'Inactive'].includes(payload.status))
+      return 'Status must be Active or Inactive';
+
+    return '';
+  }
+
+  const handleAddDepot = async () => {
     setLoading(true);
     setError('');
     setInfo('');
 
     try {
+      // Important: do NOT send empty strings for optional fields, or backend match validators will fail.
       const payload = {
-        ...form,
-        depotCd: normalizeCd(form.depotCd),
-        stateCd: normalizeCd(form.stateCd),
-        pin:     toNumOrUndef(form.pin)
+        depotCd: normalizeUpperTrim(form.depotCd),
+        depotName: normalizeTrim(form.depotName),
+
+        gstin: optionalUpperTrim(form.gstin),
+        contactNo: optionalTrim(form.contactNo),
+        email: optionalTrim(form.email)?.toLowerCase(),
+        contactName: optionalTrim(form.contactName),
+        status: normalizeTrim(form.status) || 'Active',
+
+        depotAdd1: optionalTrim(form.depotAdd1),
+        depotAdd2: optionalTrim(form.depotAdd2),
+        depotAdd3: optionalTrim(form.depotAdd3),
+        depotArea: optionalTrim(form.depotArea),
+        city: optionalTrim(form.city),
+        pin: toIntOrUndef(form.pin),
+        stateCd: optionalUpperTrim(form.stateCd),
       };
-      if (!payload.depotCd || !payload.depotName) {
-        setError('Depot Code and Depot Name are required');
-        setLoading(false);
+
+      const clientErr = validateClient(payload);
+      if (clientErr) {
+        setError(clientErr);
         return;
       }
 
-      // If depot with same code exists, offer to update instead of creating
-      const existing = depots.find(
-        d => normalizeCd(d.depotCd) === payload.depotCd
-      );
+      // Upsert by depotCd (kept from your logic)
+      const existing = depots.find(d => normalizeUpperTrim(d.depotCd) === payload.depotCd);
 
       if (existing) {
-        const ok = window.confirm(
-          `Depot "${payload.depotCd}" already exists. Do you want to update it instead?`
-        );
-        if (!ok) {
-          setLoading(false);
-          return;
-        }
+        const ok = window.confirm(`Depot "${payload.depotCd}" already exists. Update it?`);
+        if (!ok) return;
+
         await api.put(`/depots/${existing._id}`, payload);
         setInfo(`Updated depot ${payload.depotCd}.`);
       } else {
@@ -92,310 +255,354 @@ export default function DepotManagement() {
       await loadDepots();
       setForm(initial);
     } catch (err) {
-      setError(err.response?.data?.error || 'Save failed');
+      setError(friendlyApiError(err));
     } finally {
       setLoading(false);
     }
   };
 
-  const startEdit = d => {
-    setEditingId(d._id);
-    setEditForm({
-      depotCd:   d.depotCd || '',
-      depotName: d.depotName || '',
-      depotAdd1: d.depotAdd1 || '',
-      depotAdd2: d.depotAdd2 || '',
-      depotAdd3: d.depotAdd3 || '',
-      depotArea: d.depotArea || '',
-      city:      d.city || '',
-      pin:       d.pin?.toString() || '',
-      stateCd:   d.stateCd || ''
-    });
-    setError('');
-    setInfo('');
+  const handleLogout = () => {
+    localStorage.removeItem('token');
+    localStorage.removeItem('authToken');
+    sessionStorage.removeItem('token');
+    navigate('/login');
   };
-
-  const cancelEdit = () => {
-    setEditingId(null);
-    setEditForm(initial);
-  };
-
-  const handleEditChange = e => {
-    const { name, value } = e.target;
-    setEditForm(f => ({
-      ...f,
-      [name]: name === 'depotCd' || name === 'stateCd' ? value.toUpperCase() : value
-    }));
-  };
-
-  const submitEdit = async e => {
-    e?.preventDefault();
-    if (!editingId) return;
-    setSavingId(editingId);
-    setError('');
-    setInfo('');
-    try {
-      const payload = {
-        ...editForm,
-        depotCd: normalizeCd(editForm.depotCd),
-        stateCd: normalizeCd(editForm.stateCd),
-        pin:     toNumOrUndef(editForm.pin)
-      };
-      if (!payload.depotCd || !payload.depotName) {
-        setError('Depot Code and Depot Name are required');
-        setSavingId(null);
-        return;
-      }
-
-      // prevent changing code to an already-used one
-      const clash = depots.find(
-        d => normalizeCd(d.depotCd) === payload.depotCd && d._id !== editingId
-      );
-      if (clash) {
-        setError(`Depot code "${payload.depotCd}" is already in use.`);
-        setSavingId(null);
-        return;
-      }
-
-      const res = await api.put(`/depots/${editingId}`, payload);
-      setDepots(list => list.map(d => (d._id === editingId ? res.data : d)));
-      setInfo(`Saved depot ${payload.depotCd}.`);
-      cancelEdit();
-    } catch (err) {
-      setError(err.response?.data?.error || 'Update failed');
-    } finally {
-      setSavingId(null);
-    }
-  };
-
-  const handleDelete = async id => {
-    if (!window.confirm('Delete this depot?')) return;
-    setError('');
-    setInfo('');
-    try {
-      await api.delete(`/depots/${id}`);
-      setDepots(list => list.filter(d => d._id !== id));
-      if (editingId === id) cancelEdit();
-      setInfo('Depot deleted.');
-    } catch (err) {
-      setError(err.response?.data?.error || 'Delete failed');
-    }
-  };
-
-  const filtered = depots.filter(d => {
-    const q = search.trim().toLowerCase();
-    if (!q) return true;
-    return (
-      String(d.depotCd || '').toLowerCase().includes(q) ||
-      String(d.depotName || '').toLowerCase().includes(q) ||
-      String(d.city || '').toLowerCase().includes(q)
-    );
-  });
 
   return (
-    <div className="p-4 lg:p-6 bg-gray-50 min-h-screen">
-      <div className="max-w-6xl mx-auto grid grid-cols-1 lg:grid-cols-2 gap-6">
-        {/* Left: Create/Upsert Form (compact, sticky actions) */}
-        <div className="bg-white rounded-lg shadow flex flex-col max-h-[85vh]">
-          <div className="px-5 py-4 border-b">
-            <h2 className="text-xl font-semibold">Depot Management</h2>
-           
+    <div className="min-h-screen bg-white">
+      <div className="py-6">
+        <h1 className="text-center text-4xl font-extrabold tracking-wide">DEPOT CREATION</h1>
+      </div>
+
+      <div className="max-w-7xl mx-auto px-6">
+        <div className="flex items-center justify-between border rounded-md px-4 py-3">
+          <div className="text-sm">
+            <span className="text-gray-700">Welcome, </span>
+            <span className="font-semibold">{currentUserId || '—'}</span>
+            <span className="text-gray-700">!</span>
           </div>
 
-          {(error || info) && (
-            <div className="px-5 pt-3">
-              {error && <div className="text-red-600 mb-2">{error}</div>}
-              {info  && <div className="text-green-600 mb-2">{info}</div>}
-            </div>
-          )}
-
-          <form onSubmit={handleSubmit} className="flex-1 overflow-y-auto px-5 py-4 space-y-4">
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-              <div>
-                <label className="block text-sm font-medium mb-1">Depot Code</label>
-                <input
-                  name="depotCd"
-                  value={form.depotCd}
-                  onChange={handleChange}
-                  required
-                  className="w-full border rounded px-3 py-2"
-                  placeholder="e.g. D01"
-                />
-              </div>
-              <div>
-                <label className="block text-sm font-medium mb-1">Depot Name</label>
-                <input
-                  name="depotName"
-                  value={form.depotName}
-                  onChange={handleChange}
-                  required
-                  className="w-full border rounded px-3 py-2"
-                  placeholder="Main Depot"
-                />
-              </div>
-            </div>
-
-            <fieldset className="border border-gray-200 rounded">
-              <legend className="text-sm font-semibold px-2">Address</legend>
-              <div className="p-4 space-y-3">
-                {['depotAdd1','depotAdd2','depotAdd3'].map((field, idx) => (
-                  <input
-                    key={field}
-                    name={field}
-                    value={form[field]}
-                    onChange={handleChange}
-                    className="w-full border rounded px-3 py-2"
-                    placeholder={`Address Line ${idx+1}`}
-                  />
-                ))}
-                <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
-                  <input name="depotArea" value={form.depotArea} onChange={handleChange} placeholder="Area" className="border rounded px-3 py-2" />
-                  <input name="city"      value={form.city}      onChange={handleChange} placeholder="City" className="border rounded px-3 py-2" />
-                  <input name="pin"       value={form.pin}       onChange={handleChange} placeholder="PIN Code" type="number" className="border rounded px-3 py-2" />
-                </div>
-                <input name="stateCd" value={form.stateCd} onChange={handleChange} placeholder="State Code" className="w-full border rounded px-3 py-2" />
-              </div>
-            </fieldset>
-          </form>
-
-          <div className="px-5 py-3 border-t">
+          <div className="flex items-center gap-2">
             <button
-              type="submit"
-              onClick={handleSubmit}
-              disabled={loading}
-              className="w-full bg-green-600 text-white py-2 rounded hover:bg-green-700 transition"
+              onClick={() => navigate('/')}
+              className="px-4 py-2 rounded border bg-white hover:bg-gray-50 inline-flex items-center gap-2"
+              title="Home"
+              type="button"
             >
-              {loading ? 'Saving…' : <span className="inline-flex items-center gap-2"><PlusIcon size={16}/> Save Depot</span>}
+              <Home size={16} /> Home
             </button>
+
+            <button
+              onClick={() => navigate(-1)}
+              className="px-4 py-2 rounded border bg-white hover:bg-gray-50 inline-flex items-center gap-2"
+              title="Back"
+              type="button"
+            >
+              <ArrowLeft size={16} /> Back
+            </button>
+
+            <button
+              onClick={handleLogout}
+              className="px-4 py-2 rounded border bg-white hover:bg-gray-50 inline-flex items-center gap-2"
+              title="Log Out"
+              type="button"
+            >
+              <LogOut size={16} /> Log Out
+            </button>
+
+            <div className="ml-3 text-sm font-semibold text-red-600">{isAdmin ? 'Admin' : ''}</div>
+          </div>
+        </div>
+      </div>
+
+      <div className="max-w-7xl mx-auto px-6 py-6">
+        <div className="text-center text-lg font-semibold mb-4">DEPOT</div>
+
+        {(error || info) && (
+          <div className="mb-4">
+            {error && <div className="text-red-600 font-medium">{error}</div>}
+            {info && <div className="text-green-700 font-medium">{info}</div>}
+          </div>
+        )}
+
+        <div className="flex items-center justify-between mb-4 gap-3 flex-wrap">
+          <button
+            onClick={handleAddDepot}
+            disabled={loading}
+            className="px-6 py-2 rounded bg-blue-700 text-white hover:bg-blue-800 disabled:opacity-60"
+            type="button"
+          >
+            {loading ? 'Saving…' : 'Add Depot'}
+          </button>
+
+          <div className="flex items-center gap-2 flex-wrap justify-end">
+            <button
+              onClick={() => {
+                setShowSearch(v => !v);
+                setSearchTerm('');
+              }}
+              className="px-6 py-2 rounded bg-blue-700 text-white hover:bg-blue-800"
+              type="button"
+            >
+              Search Depot By Code or Name
+            </button>
+
+            {showSearch && (
+              <div className="relative w-80">
+                <input
+                  value={searchTerm}
+                  onChange={e => setSearchTerm(e.target.value)}
+                  placeholder="Type code, name, city, GSTIN, contact…"
+                  className="w-full border rounded pl-9 pr-9 py-2"
+                />
+                <Search
+                  size={16}
+                  className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-500"
+                />
+                <button
+                  onClick={() => setSearchTerm('')}
+                  className="absolute right-2 top-1/2 -translate-y-1/2 text-gray-600 hover:text-black"
+                  title="Clear"
+                  type="button"
+                >
+                  <X size={16} />
+                </button>
+              </div>
+            )}
           </div>
         </div>
 
-        {/* Right: Search + Table (own scroll) */}
-        <div className="bg-white rounded-lg shadow p-4 flex flex-col max-h-[85vh]">
-          <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2 pb-3 border-b">
-            <h3 className="text-lg font-semibold">Existing Depots</h3>
-            <div className="relative w-full sm:w-80">
+        <div className="border rounded-md p-4 mb-6">
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+            <div>
+              <label className="block text-sm font-semibold text-red-600">Depot Code *</label>
               <input
-                type="text"
-                value={search}
-                onChange={e => setSearch(e.target.value)}
-                placeholder="Search by code, name, city…"
-                className="w-full border rounded pl-9 pr-3 py-2"
+                name="depotCd"
+                value={form.depotCd}
+                onChange={handleChange}
+                className="w-full border rounded px-3 py-2"
+                placeholder="e.g. 271"
+                maxLength={3}
+                inputMode="numeric"
               />
-              <SearchIcon size={16} className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-500"/>
+            </div>
+
+            <div>
+              <label className="block text-sm font-semibold text-red-600">Depot Name *</label>
+              <input
+                name="depotName"
+                value={form.depotName}
+                onChange={handleChange}
+                className="w-full border rounded px-3 py-2"
+                placeholder="Depot Name"
+                maxLength={20}
+              />
             </div>
           </div>
 
-          <div className="overflow-auto mt-3">
-            <table className="min-w-full divide-y divide-gray-200">
-              <thead className="bg-gray-50 sticky top-0 z-10">
-                <tr>
-                  {['Code','Name','City','PIN','Actions'].map((h,i)=>(
-                    <th key={i} className="px-3 py-2 text-left text-xs sm:text-sm font-semibold">{h}</th>
-                  ))}
+          <div className="mt-4 grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
+            <div>
+              <label className="block text-sm font-semibold">GSTIN No.</label>
+              <input
+                name="gstin"
+                value={form.gstin}
+                onChange={handleChange}
+                className="w-full border rounded px-3 py-2"
+                placeholder="e.g. 27ABCDE1234F1Z5"
+                maxLength={15}
+              />
+            </div>
+
+            <div>
+              <label className="block text-sm font-semibold">Contact No.</label>
+              <input
+                name="contactNo"
+                value={form.contactNo}
+                onChange={handleChange}
+                className="w-full border rounded px-3 py-2"
+                placeholder="e.g. 9898989878"
+                maxLength={10}
+                inputMode="numeric"
+              />
+            </div>
+
+            <div>
+              <label className="block text-sm font-semibold">E-Mail</label>
+              <input
+                name="email"
+                value={form.email}
+                onChange={handleChange}
+                className="w-full border rounded px-3 py-2"
+                placeholder="e.g. name@email.com"
+                maxLength={254}
+                type="email"
+              />
+            </div>
+
+            <div>
+              <label className="block text-sm font-semibold">Contact Name</label>
+              <input
+                name="contactName"
+                value={form.contactName}
+                onChange={handleChange}
+                className="w-full border rounded px-3 py-2"
+                placeholder="e.g. Mahesh Jadhav"
+                maxLength={30}
+              />
+            </div>
+          </div>
+
+          <div className="mt-4 grid grid-cols-1 md:grid-cols-2 gap-4">
+            <div>
+              <label className="block text-sm font-semibold">Status</label>
+              <select
+                name="status"
+                value={form.status}
+                onChange={handleChange}
+                className="w-full border rounded px-3 py-2 bg-white"
+              >
+                <option value="Active">Active</option>
+                <option value="Inactive">Inactive</option>
+              </select>
+            </div>
+          </div>
+
+          <div className="mt-5">
+            <label className="block text-sm font-semibold">Address</label>
+
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-3 mt-2">
+              <input
+                name="depotAdd1"
+                value={form.depotAdd1}
+                onChange={handleChange}
+                className="border rounded px-3 py-2"
+                placeholder="Add Line 1"
+                maxLength={30}
+              />
+              <input
+                name="depotAdd2"
+                value={form.depotAdd2}
+                onChange={handleChange}
+                className="border rounded px-3 py-2"
+                placeholder="Add Line 2"
+                maxLength={30}
+              />
+              <input
+                name="depotAdd3"
+                value={form.depotAdd3}
+                onChange={handleChange}
+                className="border rounded px-3 py-2"
+                placeholder="Add Line 3"
+                maxLength={30}
+              />
+            </div>
+
+            <div className="grid grid-cols-1 md:grid-cols-4 gap-3 mt-3">
+              <input
+                name="depotArea"
+                value={form.depotArea}
+                onChange={handleChange}
+                className="border rounded px-3 py-2"
+                placeholder="Area"
+                maxLength={30}
+              />
+              <input
+                name="city"
+                value={form.city}
+                onChange={handleChange}
+                className="border rounded px-3 py-2"
+                placeholder="City"
+                maxLength={20}
+              />
+              <input
+                name="pin"
+                value={form.pin}
+                onChange={handleChange}
+                className="border rounded px-3 py-2"
+                placeholder="PIN"
+                inputMode="numeric"
+              />
+              <input
+                name="stateCd"
+                value={form.stateCd}
+                onChange={handleChange}
+                className="border rounded px-3 py-2"
+                placeholder="State Code (e.g. 27)"
+                maxLength={2}
+                inputMode="numeric"
+              />
+            </div>
+          </div>
+
+          {!isAdmin && (
+            <div className="mt-3 text-sm text-gray-600">
+              Note: Creating/updating depots may be restricted to Admin users by the backend.
+            </div>
+          )}
+        </div>
+
+        <div className="border rounded-md overflow-hidden">
+          <div className="px-4 py-2 font-semibold text-center border-b">All Depot Status</div>
+
+          <div className="overflow-x-auto">
+            <table className="min-w-[1200px] w-full text-sm">
+              <thead className="bg-gray-50">
+                <tr className="text-left">
+                  <th className="px-3 py-2">S/n</th>
+                  <th className="px-3 py-2">Depot Name</th>
+                  <th className="px-3 py-2">Depot Code</th>
+                  <th className="px-3 py-2">State</th>
+                  <th className="px-3 py-2">City</th>
+                  <th className="px-3 py-2">Area</th>
+                  <th className="px-3 py-2">PIN</th>
+                  <th className="px-3 py-2">GSTIN</th>
+                  <th className="px-3 py-2">Contact No.</th>
+                  <th className="px-3 py-2">E-Mail</th>
+                  <th className="px-3 py-2">Contact Name</th>
+                  <th className="px-3 py-2">Status</th>
                 </tr>
               </thead>
-              <tbody className="divide-y divide-gray-100">
-                {filtered.map(d => (
-                  <tr key={d._id} className="align-top hover:bg-gray-50">
-                    {editingId === d._id ? (
-                      <>
-                        <td className="px-3 py-2">
-                          <input
-                            name="depotCd"
-                            value={editForm.depotCd}
-                            onChange={handleEditChange}
-                            className="w-28 sm:w-32 border rounded px-2 py-1"
-                          />
-                        </td>
-                        <td className="px-3 py-2">
-                          <div className="grid grid-cols-1 gap-2">
-                            <input name="depotName" value={editForm.depotName} onChange={handleEditChange} className="border rounded px-2 py-1" placeholder="Depot Name"/>
-                            <input name="depotAdd1" value={editForm.depotAdd1} onChange={handleEditChange} className="border rounded px-2 py-1" placeholder="Addr line 1"/>
-                            <input name="depotAdd2" value={editForm.depotAdd2} onChange={handleEditChange} className="border rounded px-2 py-1" placeholder="Addr line 2"/>
-                            <input name="depotAdd3" value={editForm.depotAdd3} onChange={handleEditChange} className="border rounded px-2 py-1" placeholder="Addr line 3"/>
-                          </div>
-                        </td>
-                        <td className="px-3 py-2">
-                          <div className="grid grid-cols-1 gap-2">
-                            <input name="city" value={editForm.city} onChange={handleEditChange} className="border rounded px-2 py-1" placeholder="City"/>
-                            <input name="depotArea" value={editForm.depotArea} onChange={handleEditChange} className="border rounded px-2 py-1" placeholder="Area"/>
-                            <input name="stateCd" value={editForm.stateCd} onChange={handleEditChange} className="border rounded px-2 py-1" placeholder="State Code"/>
-                          </div>
-                        </td>
-                        <td className="px-3 py-2">
-                          <input name="pin" value={editForm.pin} onChange={handleEditChange} type="number" className="w-28 border rounded px-2 py-1" placeholder="PIN"/>
-                        </td>
-                        <td className="px-3 py-2">
-                          <div className="flex flex-wrap gap-2">
-                            <button
-                              onClick={submitEdit}
-                              disabled={savingId === d._id}
-                              className="px-2 py-1 bg-blue-600 text-white rounded hover:bg-blue-700 inline-flex items-center gap-1"
-                              title="Save"
-                            >
-                              {savingId === d._id ? 'Saving…' : <><SaveIcon size={14}/> Save</>}
-                            </button>
-                            <button
-                              onClick={cancelEdit}
-                              disabled={savingId === d._id}
-                              className="px-2 py-1 bg-gray-200 rounded inline-flex items-center gap-1"
-                              title="Cancel"
-                            >
-                              <XIcon size={14}/> Cancel
-                            </button>
-                          </div>
-                        </td>
-                      </>
-                    ) : (
-                      <>
-                        <td className="px-3 py-2 text-sm font-mono">{d.depotCd}</td>
-                        <td className="px-3 py-2 text-sm">
-                          <div className="font-medium">{d.depotName}</div>
-                          <div className="text-gray-600 text-xs whitespace-pre-line">
-                            {[d.depotAdd1, d.depotAdd2, d.depotAdd3].filter(Boolean).join('\n')}
-                          </div>
-                        </td>
-                        <td className="px-3 py-2 text-sm">
-                          <div>{d.city || '—'}</div>
-                          <div className="text-gray-600 text-xs">{d.depotArea}</div>
-                          <div className="text-gray-600 text-xs">{d.stateCd}</div>
-                        </td>
-                        <td className="px-3 py-2 text-sm">{d.pin || '—'}</td>
-                        <td className="px-3 py-2">
-                          <div className="flex flex-wrap gap-2">
-                            <button
-                              onClick={() => startEdit(d)}
-                              className="px-2 py-1 bg-white border rounded hover:bg-gray-100 inline-flex items-center gap-1"
-                              title="Edit"
-                            >
-                              <Edit2Icon size={14}/> Edit
-                            </button>
-                            <button
-                              onClick={() => handleDelete(d._id)}
-                              className="px-2 py-1 bg-red-600 text-white rounded hover:bg-red-700 inline-flex items-center gap-1"
-                              title="Delete"
-                            >
-                              <Trash2Icon size={14}/> Delete
-                            </button>
-                          </div>
-                        </td>
-                      </>
-                    )}
-                  </tr>
-                ))}
-
-                {!filtered.length && (
+              <tbody>
+                {listLoading ? (
                   <tr>
-                    <td colSpan={5} className="px-3 py-8 text-center text-sm text-gray-500">
-                      No depots found.
+                    <td colSpan={12} className="px-3 py-8 text-center text-gray-500">
+                      Loading depots…
                     </td>
                   </tr>
+                ) : (
+                  <>
+                    {filteredDepots.map((d, idx) => (
+                      <tr key={d._id} className="border-t hover:bg-gray-50 align-top">
+                        <td className="px-3 py-2">{idx + 1}</td>
+                        <td className="px-3 py-2">{d.depotName || '—'}</td>
+                        <td className="px-3 py-2 font-mono">{d.depotCd || '—'}</td>
+                        <td className="px-3 py-2">{d.stateCd || '—'}</td>
+                        <td className="px-3 py-2">{d.city || '—'}</td>
+                        <td className="px-3 py-2">{d.depotArea || '—'}</td>
+                        <td className="px-3 py-2">{d.pin ?? '—'}</td>
+                        <td className="px-3 py-2 font-mono">{d.gstin || '—'}</td>
+                        <td className="px-3 py-2">{d.contactNo || '—'}</td>
+                        <td className="px-3 py-2">{d.email || '—'}</td>
+                        <td className="px-3 py-2">{d.contactName || '—'}</td>
+                        <td className="px-3 py-2">{d.status || '—'}</td>
+                      </tr>
+                    ))}
+
+                    {!filteredDepots.length && (
+                      <tr>
+                        <td colSpan={12} className="px-3 py-8 text-center text-gray-500">
+                          No depots found.
+                        </td>
+                      </tr>
+                    )}
+                  </>
                 )}
               </tbody>
             </table>
           </div>
         </div>
+
+        <div className="h-10" />
       </div>
     </div>
   );
