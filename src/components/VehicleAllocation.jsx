@@ -1,18 +1,8 @@
-import React, { useEffect, useMemo, useState } from "react";
+// src/components/FleetAllocation.jsx
+import React, { useCallback, useEffect, useMemo, useState } from "react";
+import { Link, useNavigate } from "react-router-dom";
 import api from "../api";
 import { Truck, Search, Wrench, X, RefreshCcw } from "lucide-react";
-
-/**
- * FleetAllocation.jsx
- * - Lists orders (GET /orders)
- * - Fleet picker (GET /fleets?search=) → allocate (PUT /fleets/:id/allocate { orderId })
- * - Release fleet (PUT /fleets/:id/release { orderId })
- *
- * Assumptions:
- *   Order: _id, orderNo?, customer{custCd,custName}, shipToAddress, items[], deliveryDate, deliveryTimeSlot,
- *          fleet?(id or populated), orderStatus?
- *   Fleet: _id, vehicle{_id, vehicleNo, calibratedCapacity?, depotCd?}, driver{_id, driverName, profile{empName?}}
- */
 
 const PRODUCT_MAP = [
   { test: /^(diesel|hsd)$/i, code: "101", name: "HSD", defaultUom: "L" },
@@ -23,174 +13,183 @@ const norm = (s) => String(s || "").replace(/\s+/g, "").toLowerCase();
 
 function deriveProductMeta(productName = "") {
   const found = PRODUCT_MAP.find((m) => m.test.test(String(productName)));
-  if (!found) {
-    return {
-      code: "",
-      name: String(productName || "").toUpperCase(),
-      defaultUom: "L",
-    };
-  }
+  if (!found) return { code: "", name: String(productName || "").toUpperCase(), defaultUom: "L" };
   return found;
 }
+
 function ddmmyyyy(date) {
-  if (!date) return "";
+  if (!date) return "—";
   const d = new Date(date);
+  if (Number.isNaN(d.getTime())) return "—";
   const dd = String(d.getDate()).padStart(2, "0");
   const mm = String(d.getMonth() + 1).padStart(2, "0");
   const yyyy = d.getFullYear();
   return `${dd}-${mm}-${yyyy}`;
 }
+
 function yyyymmddInput(date) {
   if (!date) return "";
   const d = new Date(date);
+  if (Number.isNaN(d.getTime())) return "";
   const dd = String(d.getDate()).padStart(2, "0");
   const mm = String(d.getMonth() + 1).padStart(2, "0");
   const yyyy = d.getFullYear();
   return `${yyyy}-${mm}-${dd}`;
 }
 
-export default function FleetAllocation() {
-  // -------- data state ----------
-  const [orders, setOrders] = useState([]);
-  const [rawById, setRawById] = useState({});
-  const [fleetsRef, setFleetsRef] = useState([]); // for lookups
+function safeJsonParse(s) {
+  try {
+    return JSON.parse(s);
+  } catch {
+    return null;
+  }
+}
 
-  // -------- ui state ----------
+function getCurrentUserId() {
+  const u = safeJsonParse(localStorage.getItem("user") || "");
+  const candidates = [
+    u?.userId,
+    u?.empCd,
+    u?.username,
+    u?.loginId,
+    u?.mobileNo,
+    localStorage.getItem("userId"),
+    localStorage.getItem("empCd"),
+    localStorage.getItem("username"),
+  ].filter(Boolean);
+  return candidates.length ? String(candidates[0]) : "Md100";
+}
+
+function getRoleText() {
+  const u = safeJsonParse(localStorage.getItem("user") || "");
+  const raw = (u?.userType ?? u?.role ?? localStorage.getItem("userType") ?? "a");
+  const code = String(raw).toLowerCase();
+  const map = { a: "Admin", e: "Executive", d: "Driver", va: "Vehicle Alloc", tr: "Trips", ac: "Accounts" };
+  return map[code] || "Admin";
+}
+
+export default function FleetAllocation() {
+  const navigate = useNavigate();
+
+  const [ordersRaw, setOrdersRaw] = useState([]);
+  const [rawById, setRawById] = useState({});
+  const [fleetsRef, setFleetsRef] = useState([]);
+
   const [ordersLoading, setOrdersLoading] = useState(false);
   const [error, setError] = useState("");
 
-  // filters
   const [orderQuery, setOrderQuery] = useState("");
   const [from, setFrom] = useState("");
   const [to, setTo] = useState("");
 
-  // editing
   const [editingId, setEditingId] = useState(null);
   const [editForm, setEditForm] = useState({});
 
-  // fleet modal
+  const [selectedOrderId, setSelectedOrderId] = useState(null);
+
   const [fleetModalOpen, setFleetModalOpen] = useState(false);
   const [fleetModalOrder, setFleetModalOrder] = useState(null);
 
-  // debug panel
-  const [lastUpdatedOrder, setLastUpdatedOrder] = useState(null);
+  const [toast, setToast] = useState("");
 
-  // ------- memo helpers -------
+  const userId = useMemo(getCurrentUserId, []);
+  const roleText = useMemo(getRoleText, []);
+
   const fleetById = useMemo(() => {
     const m = {};
     for (const f of fleetsRef) m[String(f._id)] = f;
     return m;
   }, [fleetsRef]);
 
-  // tolerant getters
-  const getOrderNo = (o) => o?.orderNo || o?._id || "—";
-  const getCustomerCd = (o) => o?.customer?.custCd || "—";
-  const getCustomerName = (o) => o?.customer?.custName || "—";
-  const getShipTo = (o) => o?.shipToAddress || o?.shipTo || "—";
-  const getFirstItem = (o) =>
-    Array.isArray(o?.items) && o.items.length ? o.items[0] : null;
-  const getDeliveryDate = (o) =>
-    o?.deliveryDate ? new Date(o.deliveryDate).toISOString() : null;
-  const getTimeSlot = (o) => o?.deliveryTimeSlot || "—";
-
-  const getFleetId = (o) =>
-    typeof o?.fleet === "string" ? o.fleet : o?.fleet?._id || null;
-
-  const getFleetVehicleNo = (o) => {
-    if (o?.fleet?.vehicle?.vehicleNo) return o.fleet.vehicle.vehicleNo;
-    const id = getFleetId(o);
-    return id && fleetById[id]?.vehicle?.vehicleNo
-      ? fleetById[id].vehicle.vehicleNo
-      : "";
-  };
-
-  const getFleetDriverName = (o) => {
-    if (o?.fleet?.driver) {
-      const d = o.fleet.driver;
-      return d.driverName || d.profile?.empName || "";
-    }
-    const id = getFleetId(o);
-    const d = id ? fleetById[id]?.driver : null;
-    return d ? d.driverName || d.profile?.empName || "" : "";
-  };
-
-  // ================= data fetch =================
-  const fetchAll = async () => {
-    setOrdersLoading(true);
-    setError("");
-    try {
-      const [ordersRes, fleetsRes] = await Promise.all([
-        api.get("/orders"),
-        api.get("/fleets"),
-      ]);
-
-      setFleetsRef(Array.isArray(fleetsRes.data) ? fleetsRes.data : []);
-
-      const ordersArr = Array.isArray(ordersRes.data) ? ordersRes.data : [];
-      const byId = {};
-      ordersArr.forEach((o) => (byId[o._id] = o));
-      setRawById(byId);
-
-      setOrders(mapOrdersToRows(ordersArr));
-    } catch (e) {
-      setError(e?.response?.data?.error || "Failed to load orders/fleets.");
-      setOrders([]);
-    } finally {
-      setOrdersLoading(false);
-    }
-  };
-
-  useEffect(() => {
-    fetchAll();
-    // eslint-disable-next-line 
-
-  }, []);
-
-  // refresh mapped fleet fields when fleetsRef changes
-  useEffect(() => {
-    if (!orders.length) return;
-    setOrders((prev) => mapOrdersToRows(prev, true));
-    // eslint-disable-next-line 
-
-  }, [fleetById]);
-
-  function mapOrdersToRows(list, skipRaw = false) {
-    return list.map((o) => {
-      const items = Array.isArray(o.items) ? o.items : [];
+  const mapOrderToRow = useCallback(
+    (o) => {
+      const items = Array.isArray(o?.items) ? o.items : [];
       const first = items[0] || {};
       const meta = deriveProductMeta(first.productName);
 
-      const fId = getFleetId(o);
-      const vNo = getFleetVehicleNo(o);
-      const dName = getFleetDriverName(o);
+      const fleetId = typeof o?.fleet === "string" ? o.fleet : o?.fleet?._id || null;
+
+      const vNo =
+        o?.fleet?.vehicle?.vehicleNo ||
+        (fleetId && fleetById[fleetId]?.vehicle?.vehicleNo) ||
+        "";
+
+      const dNameFromFleetObj = o?.fleet?.driver
+        ? (o.fleet.driver.driverName || o.fleet.driver.profile?.empName || "")
+        : "";
+
+      const dNameFromRef = fleetId
+        ? (fleetById[fleetId]?.driver?.driverName || fleetById[fleetId]?.driver?.profile?.empName || "")
+        : "";
+
+      const driverName = dNameFromFleetObj || dNameFromRef || "";
+
+      const deliveryISO = o?.deliveryDate ? new Date(o.deliveryDate).toISOString() : null;
 
       return {
         _id: o._id,
-        orderNo: getOrderNo(o),
-        userName: o.empCd || "",
-        userType: o.userType || "",
-        custId: getCustomerCd(o),
-        custName: getCustomerName(o),
-        shipToLoc: getShipTo(o),
+        orderNo: o?.orderNo || String(o?._id || "").slice(-6),
+        userName: o?.empCd || "",
+        custId: o?.customer?.custCd || "—",
+        custName: o?.customer?.custName || "—",
+        shipToLoc: o?.shipToAddress || o?.shipTo || "—",
         pdtCode: meta.code,
         pdtName: meta.name,
         pdtQty: Number(first.quantity || 0),
         uom: first.uom || meta.defaultUom || "L",
         pdtRate: Number(first.rate || 0),
-        dateDely: getDeliveryDate(o),
-        timeSlot: getTimeSlot(o),
-        orderStatus: o.orderStatus || "PENDING",
-        fleetId: fId,
-        vehicleRegNo: vNo || "",
-        driverName: dName || "",
-        _raw: skipRaw ? o._raw || o : o,
+        dateDely: deliveryISO,
+        timeSlot: o?.deliveryTimeSlot || "—",
+        orderStatus: o?.orderStatus || "PENDING",
+        fleetId,
+        vehicleRegNo: vNo,
+        driverName,
       };
-    });
-  }
+    },
+    [fleetById]
+  );
 
-  // ============ client filters ============
+  const rows = useMemo(() => ordersRaw.map(mapOrderToRow), [ordersRaw, mapOrderToRow]);
+
+  const selectedRow = useMemo(() => {
+    if (!selectedOrderId) return null;
+    return rows.find((r) => String(r._id) === String(selectedOrderId)) || null;
+  }, [rows, selectedOrderId]);
+
+  const fetchAll = useCallback(async () => {
+    setOrdersLoading(true);
+    setError("");
+    try {
+      const [ordersRes, fleetsRes] = await Promise.all([api.get("/orders"), api.get("/fleets")]);
+      const fleetsArr = Array.isArray(fleetsRes.data) ? fleetsRes.data : [];
+      const ordersArr = Array.isArray(ordersRes.data) ? ordersRes.data : [];
+
+      setFleetsRef(fleetsArr);
+      setOrdersRaw(ordersArr);
+
+      const byId = {};
+      for (const o of ordersArr) byId[o._id] = o;
+      setRawById(byId);
+
+      if (!selectedOrderId && ordersArr.length) setSelectedOrderId(ordersArr[0]._id);
+    } catch (e) {
+      setError(e?.response?.data?.error || "Failed to load orders/fleets.");
+      setOrdersRaw([]);
+      setFleetsRef([]);
+      setRawById({});
+      setSelectedOrderId(null);
+    } finally {
+      setOrdersLoading(false);
+    }
+  }, [selectedOrderId]);
+
+  useEffect(() => {
+    fetchAll();
+  }, [fetchAll]);
+
   const filtered = useMemo(() => {
-    let temp = [...orders];
+    let temp = [...rows];
+
     if (orderQuery.trim()) {
       const s = orderQuery.trim().toLowerCase();
       temp = temp.filter(
@@ -203,22 +202,20 @@ export default function FleetAllocation() {
           (o.driverName && o.driverName.toLowerCase().includes(s))
       );
     }
-    if (from)
-      temp = temp.filter(
-        (o) => new Date(o.dateDely || o.createdAt) >= new Date(from)
-      );
+
+    if (from) temp = temp.filter((o) => new Date(o.dateDely || 0) >= new Date(from));
     if (to) {
       const end = new Date(to);
       end.setHours(23, 59, 59, 999);
-      temp = temp.filter((o) => new Date(o.dateDely || o.createdAt) <= end);
+      temp = temp.filter((o) => new Date(o.dateDely || 0) <= end);
     }
-    return [...temp].sort((a, b) =>
+
+    return temp.sort((a, b) =>
       a.orderStatus === "PENDING" && b.orderStatus !== "PENDING" ? -1 : 1
     );
-  }, [orders, orderQuery, from, to]);
+  }, [rows, orderQuery, from, to]);
 
-  // ============ edit basic order fields ============
-  const startEdit = (row) => {
+  const startEdit = useCallback((row) => {
     setEditingId(row._id);
     setEditForm({
       shipToLoc: row.shipToLoc,
@@ -228,361 +225,585 @@ export default function FleetAllocation() {
       timeSlot: row.timeSlot,
       orderStatus: row.orderStatus,
     });
-  };
-  const cancelEdit = () => {
+  }, []);
+
+  const cancelEdit = useCallback(() => {
     setEditingId(null);
     setEditForm({});
-  };
-  const onChangeEdit = (field, value) =>
+  }, []);
+
+  const onChangeEdit = useCallback((field, value) => {
     setEditForm((f) => ({ ...f, [field]: value }));
-  const saveEdit = async (id) => {
-    try {
-      const original = rawById[id];
-      if (!original) throw new Error("Original order not found");
+  }, []);
 
-      const items =
-        Array.isArray(original.items) && original.items.length > 0
-          ? original.items.map((it, idx) =>
-              idx === 0
-                ? {
-                    ...it,
-                    quantity: Number(editForm.pdtQty || 0),
-                    rate: Number(editForm.pdtRate || 0),
-                  }
-                : it
+  const saveEdit = useCallback(
+    async (id) => {
+      try {
+        const original = rawById[id];
+        if (!original) throw new Error("Order not found");
+
+        const items =
+          Array.isArray(original.items) && original.items.length > 0
+            ? original.items.map((it, idx) =>
+                idx === 0
+                  ? {
+                      ...it,
+                      quantity: Number(editForm.pdtQty || 0),
+                      rate: Number(editForm.pdtRate || 0),
+                    }
+                  : it
+              )
+            : [
+                {
+                  productName: "diesel",
+                  quantity: Number(editForm.pdtQty || 0),
+                  rate: Number(editForm.pdtRate || 0),
+                },
+              ];
+
+        const payload = {
+          shipToAddress: editForm.shipToLoc,
+          items,
+          deliveryDate: editForm.dateDely || null,
+          deliveryTimeSlot: editForm.timeSlot,
+          orderStatus: editForm.orderStatus,
+        };
+
+        const res = await api.put(`/orders/${id}`, payload);
+        const updated = res.data;
+
+        setOrdersRaw((prev) => prev.map((o) => (String(o._id) === String(id) ? updated : o)));
+        setRawById((prev) => ({ ...prev, [id]: updated }));
+
+        setEditingId(null);
+        setEditForm({});
+        setToast("Order updated successfully.");
+        window.setTimeout(() => setToast(""), 2500);
+      } catch (e) {
+        setToast("");
+        window.alert(e?.response?.data?.error || "Failed to update order");
+      }
+    },
+    [editForm, rawById]
+  );
+
+  const openFleetModal = useCallback(
+    (row) => {
+      const raw = rawById[row._id] || ordersRaw.find((o) => String(o._id) === String(row._id)) || null;
+      setFleetModalOrder(raw);
+      setFleetModalOpen(true);
+    },
+    [rawById, ordersRaw]
+  );
+
+  const closeFleetModal = useCallback(() => {
+    setFleetModalOpen(false);
+    setFleetModalOrder(null);
+  }, []);
+
+  const handleFleetAllocated = useCallback((updatedOrder) => {
+    if (!updatedOrder?._id) return;
+    setOrdersRaw((prev) => prev.map((o) => (String(o._id) === String(updatedOrder._id) ? updatedOrder : o)));
+    setRawById((prev) => ({ ...prev, [updatedOrder._id]: updatedOrder }));
+    setSelectedOrderId(updatedOrder._id);
+    setToast("Fleet allocated successfully.");
+    window.setTimeout(() => setToast(""), 2500);
+  }, []);
+
+  const releaseFleet = useCallback(
+    async (row) => {
+      try {
+        const raw = rawById[row._id] || null;
+        const fId = row.fleetId || (typeof raw?.fleet === "string" ? raw.fleet : raw?.fleet?._id) || null;
+        if (!fId) {
+          window.alert("No fleet assigned for this order.");
+          return;
+        }
+
+        const res = await api.put(`/fleets/${fId}/release`, { orderId: row._id });
+        const updatedOrder = res.data?.order || null;
+
+        if (updatedOrder) {
+          handleFleetAllocated(updatedOrder);
+        } else {
+          setOrdersRaw((prev) =>
+            prev.map((o) =>
+              String(o._id) === String(row._id)
+                ? { ...o, fleet: null }
+                : o
             )
-          : [
-              {
-                productName: "diesel",
-                quantity: Number(editForm.pdtQty || 0),
-                rate: Number(editForm.pdtRate || 0),
-              },
-            ];
-
-      const payload = {
-        shipToAddress: editForm.shipToLoc,
-        items,
-        deliveryDate: editForm.dateDely || null,
-        deliveryTimeSlot: editForm.timeSlot,
-        orderStatus: editForm.orderStatus,
-      };
-
-      const res = await api.put(`/orders/${id}`, payload);
-      const updated = res.data;
-      setOrders((prev) =>
-        mapOrdersToRows(
-          prev.map((o) => (o._id === id ? updated : o._raw || o))
-        )
-      );
-      setLastUpdatedOrder(updated);
-      setEditingId(null);
-      setEditForm({});
-    } catch (e) {
-      alert(e?.response?.data?.error || "Failed to update order");
-    }
-  };
-
-  // ============ fleet actions ============
-  const openFleetModal = (order) => {
-    setFleetModalOrder(order._raw || order);
-    setFleetModalOpen(true);
-  };
-  const closeFleetModal = () => setFleetModalOpen(false);
-
-  const handleFleetAllocated = (updatedOrder) => {
-    setOrders((prev) =>
-      mapOrdersToRows(
-        prev.map((o) =>
-          String(o._id) === String(updatedOrder._id) ? updatedOrder : o._raw || o
-        )
-      )
-    );
-    setLastUpdatedOrder(updatedOrder);
-  };
-
-  const releaseFleet = async (row) => {
-    try {
-      const fId = row.fleetId || getFleetId(row._raw || row);
-      if (!fId) {
-        alert("Fleet id not found for this order");
-        return;
+          );
+          setRawById((prev) => {
+            const copy = { ...prev };
+            if (copy[row._id]) copy[row._id] = { ...copy[row._id], fleet: null };
+            return copy;
+          });
+          setToast("Fleet released successfully.");
+          window.setTimeout(() => setToast(""), 2500);
+        }
+      } catch (e) {
+        window.alert(e?.response?.data?.error || "Failed to release fleet");
       }
-      const res = await api.put(`/fleets/${fId}/release`, {
-        orderId: row._id,
-      });
-      const updatedOrder = res.data?.order || null;
-      if (updatedOrder) {
-        handleFleetAllocated(updatedOrder);
-      } else {
-        // client fallback
-        setOrders((prev) =>
-          prev.map((r) =>
-            r._id === row._id
-              ? { ...r, fleetId: null, vehicleRegNo: "", driverName: "" }
-              : r
-          )
-        );
-      }
-    } catch (e) {
-      alert(e?.response?.data?.error || "Failed to release fleet");
-    }
-  };
+    },
+    [rawById, handleFleetAllocated]
+  );
+
+  const handleHome = useCallback(() => navigate("/dashboard"), [navigate]);
+  const handleBack = useCallback(() => navigate(-1), [navigate]);
+  const handleLogout = useCallback(() => {
+    localStorage.removeItem("token");
+    sessionStorage.removeItem("token");
+    navigate("/login");
+  }, [navigate]);
+
+  const stats = useMemo(() => {
+    const total = rows.length;
+    const pending = rows.filter((r) => r.orderStatus === "PENDING").length;
+    const assigned = rows.filter((r) => r.vehicleRegNo || r.fleetId).length;
+    return { total, pending, assigned };
+  }, [rows]);
 
   return (
-    <div className="p-6 bg-gray-50 min-h-screen">
-      {/* Header */}
-      <div className="flex items-center justify-between mb-6">
-        <h2 className="text-2xl font-semibold flex items-center gap-2">
-          <Truck size={24} /> Fleet Allocation
-        </h2>
-        <button
-          onClick={fetchAll}
-          className="inline-flex items-center gap-2 border px-3 py-2 rounded bg-white"
-          title="Refresh"
-        >
-          <RefreshCcw size={16} /> Refresh
-        </button>
-      </div>
+    <div className="min-h-screen bg-gray-100 py-4 px-2 sm:px-4">
+      <div className="max-w-7xl mx-auto bg-white border border-black/30 shadow-sm">
+        {/* Top bar */}
+        <div className="flex items-center justify-between px-4 py-2 border-b border-black/20">
+          <div className="text-sm font-semibold">
+            Welcome. <span className="font-extrabold">{userId}</span>! <span className="font-bold">FLEET MANAGER</span>
+          </div>
 
-      {/* Toolbar */}
-      <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 mb-4">
-        <div className="relative w-full sm:w-96">
-          <input
-            value={orderQuery}
-            onChange={(e) => setOrderQuery(e.target.value)}
-            placeholder="Search order / customer / vehicle / driver…"
-            className="w-full border rounded pl-9 pr-3 py-2 bg-white"
-          />
-          <Search
-            size={16}
-            className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-500"
-          />
+          <div className="flex items-center gap-2">
+            <button type="button" onClick={handleHome} className="px-6 py-1.5 rounded bg-[#b85a1d] text-white font-extrabold border border-black/40">
+              Home
+            </button>
+            <button type="button" onClick={handleBack} className="px-6 py-1.5 rounded bg-[#b85a1d] text-white font-extrabold border border-black/40">
+              Back
+            </button>
+            <button type="button" onClick={handleLogout} className="px-6 py-1.5 rounded bg-[#b85a1d] text-white font-extrabold border border-black/40">
+              Log Out
+            </button>
+            <span className="ml-2 text-red-600 font-extrabold">{roleText}</span>
+          </div>
         </div>
-        <div className="flex gap-2">
-          <input
-            type="date"
-            value={from}
-            onChange={(e) => setFrom(e.target.value)}
-            className="border rounded px-2 py-2 bg-white"
-          />
-          <input
-            type="date"
-            value={to}
-            onChange={(e) => setTo(e.target.value)}
-            className="border rounded px-2 py-2 bg-white"
-          />
+
+        {/* Title row */}
+        <div className="relative px-4 py-4 border-b border-black/10">
+          <div className="text-center">
+            <div className="text-2xl sm:text-3xl font-extrabold tracking-wide">DRIVER ASSIGNMENT</div>
+          </div>
+
+          <div className="absolute right-4 top-1/2 -translate-y-1/2 select-none text-2xl sm:text-3xl font-extrabold">
+            <span className="text-orange-600">fuel</span>
+            <span className="text-purple-700">wale</span>
+          </div>
         </div>
-      </div>
 
-      {error ? (
-        <div className="bg-red-100 text-red-700 p-3 rounded mb-4">{error}</div>
-      ) : (
-        <div className="overflow-x-auto">
-          <table className="min-w-[1100px] w-full bg-white shadow rounded">
-            <thead className="bg-orange-200/60 text-gray-800">
-              <tr className="[&>th]:px-3 [&>th]:py-2 [&>th]:text-left">
-                <th>OrderNo</th>
-                <th>UserName</th>
-                <th>Cust Id</th>
-                <th>CustName</th>
-                <th>ShipToLoc</th>
-                <th>Pdt_Code</th>
-                <th>Pdt_Name</th>
-                <th className="text-right">PdtQty</th>
-                <th>UoM</th>
-                <th className="text-right">PdtRate</th>
-                <th>Date_Dely</th>
-                <th>Time Slot</th>
-                <th>Fleet (Vehicle)</th>
-                <th>Driver</th>
-                <th className="text-center">Actions</th>
-              </tr>
-            </thead>
-            <tbody>
-              {ordersLoading && (
-                <tr>
-                  <td colSpan={15} className="px-3 py-6 text-center text-gray-500">
-                    Loading…
-                  </td>
-                </tr>
+        {/* Section buttons */}
+        <div className="px-4 py-4 flex flex-col sm:flex-row items-center justify-center gap-4 border-b border-black/10">
+          <button
+            type="button"
+            className="w-full sm:w-auto px-10 py-3 rounded-lg bg-[#0d6078] text-white font-extrabold border-2 border-[#084253]"
+          >
+            Vehicle Assignment
+          </button>
+
+          <button
+            type="button"
+            className="w-full sm:w-auto px-10 py-3 rounded-lg bg-[#0d6078] text-white font-extrabold border-2 border-[#084253]"
+            onClick={() => document.getElementById("allocation-table")?.scrollIntoView({ behavior: "smooth" })}
+          >
+            View All Assigned / Not Assigned
+          </button>
+
+          <button
+            type="button"
+            className="w-full sm:w-auto px-10 py-3 rounded-lg bg-[#0d6078] text-white font-extrabold border-2 border-[#084253]"
+            onClick={() => setOrderQuery("PENDING")}
+          >
+            Status
+          </button>
+        </div>
+
+        {/* Toast */}
+        {toast && (
+          <div className="px-4 py-3">
+            <div className="bg-emerald-50 border border-emerald-200 text-emerald-900 rounded px-3 py-2 font-semibold">
+              {toast}
+            </div>
+          </div>
+        )}
+
+        {error && (
+          <div className="px-4 py-3">
+            <div className="bg-red-50 border border-red-200 text-red-900 rounded px-3 py-2 font-semibold">
+              {error}
+            </div>
+          </div>
+        )}
+
+        {/* Green assignment panel */}
+        <div className="m-4 border-2 border-black/40 bg-[#c9f3cd]">
+          <div className="px-4 py-3 flex flex-col lg:flex-row lg:items-center lg:justify-between gap-3 border-b border-black/20">
+            <div className="flex items-center gap-3">
+              <div className="bg-yellow-300 px-3 py-1 font-extrabold text-sm border border-black/30">
+                Order Search
+              </div>
+              <div className="relative w-full sm:w-[420px]">
+                <input
+                  value={orderQuery}
+                  onChange={(e) => setOrderQuery(e.target.value)}
+                  placeholder="By Order No / Customer / Vehicle / Driver"
+                  className="w-full border border-black/20 bg-white rounded pl-9 pr-3 py-2 text-sm"
+                />
+                <Search size={16} className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-600" />
+              </div>
+            </div>
+
+            <div className="flex flex-col sm:flex-row gap-2 items-start sm:items-center justify-end">
+              <div className="text-sm font-semibold">
+                Total: <span className="font-extrabold">{stats.total}</span>{" "}
+                <span className="mx-2">|</span>
+                Pending: <span className="font-extrabold">{stats.pending}</span>{" "}
+                <span className="mx-2">|</span>
+                Assigned: <span className="font-extrabold">{stats.assigned}</span>
+              </div>
+
+              <button
+                type="button"
+                onClick={fetchAll}
+                className="inline-flex items-center gap-2 border-2 border-black/30 px-3 py-2 rounded bg-white font-extrabold"
+                title="Refresh"
+              >
+                <RefreshCcw size={16} /> Refresh
+              </button>
+            </div>
+          </div>
+
+          <div className="px-4 py-4 grid grid-cols-1 lg:grid-cols-12 gap-4">
+            {/* Selected order details */}
+            <div className="lg:col-span-7 border border-black/20 bg-white/60 p-4">
+              <div className="font-extrabold mb-3">Assignment</div>
+
+              {!selectedRow ? (
+                <div className="text-sm text-gray-700">Select an order from the list below to view details.</div>
+              ) : (
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-x-6 gap-y-3 text-sm">
+                  <Detail label="Order No." value={selectedRow.orderNo} />
+                  <Detail label="Customer" value={`${selectedRow.custId} - ${selectedRow.custName}`} />
+                  <Detail label="Ship To" value={selectedRow.shipToLoc} />
+                  <Detail label="Product" value={`${selectedRow.pdtName} (${selectedRow.pdtCode || "—"})`} />
+                  <Detail label="Qty" value={`${selectedRow.pdtQty} ${selectedRow.uom}`} />
+                  <Detail label="Delivery" value={`${ddmmyyyy(selectedRow.dateDely)} • ${selectedRow.timeSlot}`} />
+                  <Detail
+                    label="Vehicle"
+                    value={selectedRow.vehicleRegNo ? selectedRow.vehicleRegNo : "—"}
+                  />
+                  <Detail
+                    label="Driver"
+                    value={selectedRow.driverName ? selectedRow.driverName : "—"}
+                  />
+                </div>
               )}
-              {!ordersLoading && filtered.length === 0 && (
-                <tr>
-                  <td colSpan={15} className="px-3 py-6 text-center text-gray-500">
-                    No orders found.
-                  </td>
+
+              <div className="mt-4 flex flex-wrap gap-2">
+                <button
+                  type="button"
+                  onClick={() => selectedRow && openFleetModal(selectedRow)}
+                  disabled={!selectedRow}
+                  className={`inline-flex items-center gap-2 px-4 py-2 rounded border-2 font-extrabold ${
+                    selectedRow ? "bg-[#0d6078] text-white border-[#084253] hover:bg-[#0f6f8b]" : "bg-gray-100 text-gray-400 border-gray-200"
+                  }`}
+                >
+                  <Wrench size={16} />
+                  Modify Fleet
+                </button>
+
+                <button
+                  type="button"
+                  onClick={() => selectedRow && releaseFleet(selectedRow)}
+                  disabled={!selectedRow || (!selectedRow.fleetId && !selectedRow.vehicleRegNo)}
+                  className={`px-4 py-2 rounded border-2 font-extrabold ${
+                    selectedRow && (selectedRow.fleetId || selectedRow.vehicleRegNo)
+                      ? "bg-white text-red-700 border-red-300 hover:bg-red-50"
+                      : "bg-gray-100 text-gray-400 border-gray-200"
+                  }`}
+                >
+                  Release
+                </button>
+              </div>
+            </div>
+
+            {/* Date filters */}
+            <div className="lg:col-span-5 border border-black/20 bg-white/60 p-4">
+              <div className="font-extrabold mb-3">Date Filter</div>
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                <div>
+                  <div className="text-xs font-bold mb-1">From</div>
+                  <input
+                    type="date"
+                    value={from}
+                    onChange={(e) => setFrom(e.target.value)}
+                    className="w-full border border-black/20 rounded px-3 py-2 bg-white text-sm"
+                  />
+                </div>
+                <div>
+                  <div className="text-xs font-bold mb-1">To</div>
+                  <input
+                    type="date"
+                    value={to}
+                    onChange={(e) => setTo(e.target.value)}
+                    className="w-full border border-black/20 rounded px-3 py-2 bg-white text-sm"
+                  />
+                </div>
+              </div>
+
+              <div className="mt-4 border-t border-black/10 pt-3 text-xs text-black/70">
+                Search supports Order No, Customer Code/Name, Vehicle No and Driver Name.
+              </div>
+            </div>
+          </div>
+        </div>
+
+        {/* Purple list panel */}
+        <div id="allocation-table" className="m-4 border-2 border-black/40 bg-[#e3a3dc]">
+          <div className="px-4 py-2 border-b border-black/20">
+            <div className="text-center font-extrabold">All Orders / Fleet Assignment</div>
+          </div>
+
+          <div className="overflow-x-auto">
+            <table className="min-w-[1200px] w-full border-collapse">
+              <thead>
+                <tr className="bg-[#f3c7a2] text-black border-b-2 border-black/40">
+                  <th className="px-3 py-2 text-left">S/n</th>
+                  <th className="px-3 py-2 text-left">Order No.</th>
+                  <th className="px-3 py-2 text-left">Cust Code</th>
+                  <th className="px-3 py-2 text-left">Customer Name</th>
+                  <th className="px-3 py-2 text-left">Vehicle Assigned</th>
+                  <th className="px-3 py-2 text-left">Driver</th>
+                  <th className="px-3 py-2 text-left">Delivery Date</th>
+                  <th className="px-3 py-2 text-left">Delivery Time</th>
+                  <th className="px-3 py-2 text-left">Status</th>
+                  <th className="px-3 py-2 text-left">Action</th>
                 </tr>
-              )}
-              {!ordersLoading &&
-                filtered.map((row) => {
-                  const isEditing = editingId === row._id;
-                  const vehicleLast4 = row.vehicleRegNo
-                    ? row.vehicleRegNo.slice(-4)
-                    : "";
+              </thead>
 
-                  return (
-                    <tr key={row._id} className="hover:bg-gray-50 align-top">
-                      <td className="border px-3 py-2 font-mono">
-                        {row.orderNo || "—"}
-                      </td>
-                      <td className="border px-3 py-2">{row.userName || "—"}</td>
-                      <td className="border px-3 py-2">{row.custId || "—"}</td>
-                      <td className="border px-3 py-2">{row.custName || "—"}</td>
-                      <td className="border px-3 py-2">
-                        {isEditing ? (
-                          <input
-                            className="border rounded px-2 py-1 w-56"
-                            value={editForm.shipToLoc}
-                            onChange={(e) =>
-                              onChangeEdit("shipToLoc", e.target.value)
-                            }
-                          />
-                        ) : (
-                          row.shipToLoc || "—"
-                        )}
-                      </td>
-                      <td className="border px-3 py-2">{row.pdtCode || "—"}</td>
-                      <td className="border px-3 py-2">{row.pdtName || "—"}</td>
-                      <td className="border px-3 py-2 text-right">
-                        {isEditing ? (
-                          <input
-                            type="number"
-                            className="border rounded px-2 py-1 w-24 text-right"
-                            value={editForm.pdtQty}
-                            onChange={(e) => onChangeEdit("pdtQty", e.target.value)}
-                          />
-                        ) : (
-                          row.pdtQty
-                        )}
-                      </td>
-                      <td className="border px-3 py-2">{row.uom || "L"}</td>
-                      <td className="border px-3 py-2 text-right">
-                        {isEditing ? (
-                          <input
-                            type="number"
-                            className="border rounded px-2 py-1 w-24 text-right"
-                            value={editForm.pdtRate}
-                            onChange={(e) => onChangeEdit("pdtRate", e.target.value)}
-                          />
-                        ) : (
-                          row.pdtRate
-                        )}
-                      </td>
-                      <td className="border px-3 py-2">{ddmmyyyy(row.dateDely)}</td>
-                      <td className="border px-3 py-2">{row.timeSlot || "—"}</td>
+              <tbody>
+                {ordersLoading && (
+                  <tr>
+                    <td colSpan={10} className="px-3 py-8 text-center font-semibold">
+                      Loading…
+                    </td>
+                  </tr>
+                )}
 
-                      {/* Fleet (Vehicle) */}
-                      <td className="border px-3 py-2">
-                        {row.vehicleRegNo ? (
-                          <span className="px-2 py-1 rounded bg-green-200 font-mono">
-                            {vehicleLast4}
-                          </span>
-                        ) : (
-                          "—"
-                        )}
-                      </td>
+                {!ordersLoading && filtered.length === 0 && (
+                  <tr>
+                    <td colSpan={10} className="px-3 py-8 text-center font-semibold">
+                      No records found.
+                    </td>
+                  </tr>
+                )}
 
-                      {/* Driver */}
-                      <td className="border px-3 py-2">{row.driverName || "—"}</td>
+                {!ordersLoading &&
+                  filtered.map((row, idx) => {
+                    const isEditing = editingId === row._id;
+                    const active = selectedOrderId && String(selectedOrderId) === String(row._id);
 
-                      {/* Actions */}
-                      <td className="border px-3 py-2">
-                        <div className="flex flex-wrap items-center gap-2">
-                          <button
-                            onClick={() => openFleetModal(row)}
-                            className="inline-flex items-center gap-1 border px-2 py-1 rounded bg-white hover:bg-gray-50"
-                            title="Allocate / Change fleet"
-                          >
-                            <Wrench size={16} />
-                            Modify Fleet
-                          </button>
-                          <button
-                            onClick={() => releaseFleet(row)}
-                            disabled={!row.fleetId && !row.vehicleRegNo}
-                            className={`inline-flex items-center gap-1 border px-2 py-1 rounded ${
-                              row.fleetId || row.vehicleRegNo
-                                ? "text-red-600 border-red-300 bg-white hover:bg-gray-50"
-                                : "text-gray-400 cursor-not-allowed bg-gray-50"
-                            }`}
-                            title={
-                              row.fleetId || row.vehicleRegNo
-                                ? "Release fleet"
-                                : "No fleet assigned"
-                            }
-                          >
-                            Release
-                          </button>
+                    return (
+                      <tr
+                        key={row._id}
+                        className={`border-t border-black/20 cursor-pointer ${active ? "bg-white/40" : ""}`}
+                        onClick={() => setSelectedOrderId(row._id)}
+                      >
+                        <td className="px-3 py-2">{idx + 1}</td>
 
-                          {!isEditing ? (
-                            <button
-                              onClick={() => startEdit(row)}
-                              className="ml-2 text-blue-600 hover:text-blue-800"
-                              title="Edit order fields"
-                            >
-                              Edit
-                            </button>
+                        <td className="px-3 py-2 font-mono">{row.orderNo || "—"}</td>
+
+                        <td className="px-3 py-2">{row.custId || "—"}</td>
+
+                        <td className="px-3 py-2">{row.custName || "—"}</td>
+
+                        <td className="px-3 py-2">
+                          {row.vehicleRegNo ? (
+                            <span className="inline-flex items-center px-2 py-1 rounded bg-green-200/80 border border-green-300 font-mono text-xs">
+                              {row.vehicleRegNo}
+                            </span>
                           ) : (
-                            <>
+                            "—"
+                          )}
+                        </td>
+
+                        <td className="px-3 py-2">{row.driverName || "—"}</td>
+
+                        <td className="px-3 py-2">{ddmmyyyy(row.dateDely)}</td>
+
+                        <td className="px-3 py-2">{row.timeSlot || "—"}</td>
+
+                        <td className="px-3 py-2">{row.orderStatus || "—"}</td>
+
+                        <td className="px-3 py-2">
+                          {!isEditing ? (
+                            <div className="flex flex-wrap items-center gap-2">
                               <button
-                                onClick={() => saveEdit(row._id)}
-                                className="ml-2 text-green-600 hover:text-green-800"
-                                title="Save"
+                                type="button"
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  openFleetModal(row);
+                                }}
+                                className="px-3 py-1.5 rounded bg-[#0d6078] text-white font-extrabold border-2 border-[#084253] hover:bg-[#0f6f8b]"
+                              >
+                                Modify
+                              </button>
+
+                              <button
+                                type="button"
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  releaseFleet(row);
+                                }}
+                                disabled={!row.fleetId && !row.vehicleRegNo}
+                                className={`px-3 py-1.5 rounded font-extrabold border-2 ${
+                                  row.fleetId || row.vehicleRegNo
+                                    ? "bg-white text-red-700 border-red-300 hover:bg-red-50"
+                                    : "bg-gray-100 text-gray-400 border-gray-200 cursor-not-allowed"
+                                }`}
+                              >
+                                Release
+                              </button>
+
+                              <button
+                                type="button"
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  startEdit(row);
+                                }}
+                                className="px-3 py-1.5 rounded bg-white text-black font-extrabold border-2 border-black/30 hover:bg-white/60"
+                              >
+                                Edit
+                              </button>
+                            </div>
+                          ) : (
+                            <div className="flex flex-wrap items-center gap-2">
+                              <button
+                                type="button"
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  saveEdit(row._id);
+                                }}
+                                className="px-3 py-1.5 rounded bg-white text-emerald-800 font-extrabold border-2 border-emerald-300 hover:bg-emerald-50"
                               >
                                 Save
                               </button>
+
                               <button
-                                onClick={cancelEdit}
-                                className="text-gray-600 hover:text-gray-800"
-                                title="Cancel"
+                                type="button"
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  cancelEdit();
+                                }}
+                                className="px-3 py-1.5 rounded bg-white text-black font-extrabold border-2 border-black/30 hover:bg-white/60"
                               >
                                 Cancel
                               </button>
-                            </>
+                            </div>
                           )}
-                        </div>
-                      </td>
-                    </tr>
-                  );
-                })}
-            </tbody>
-          </table>
-        </div>
-      )}
-
-      {/* Debug: last updated order */}
-      {lastUpdatedOrder && (
-        <div className="mt-6 bg-[#ffecb3] border border-yellow-200 shadow rounded p-4">
-          <div className="flex items-center justify-between">
-            <h3 className="text-lg font-semibold">
-              {(lastUpdatedOrder.fleet?.vehicle?.vehicleNo ||
-                lastUpdatedOrder.vehicleRegNo ||
-                "—") + " - Order Summary"}
-            </h3>
-            <button
-              onClick={() => setLastUpdatedOrder(null)}
-              className="text-sm text-blue-700 hover:text-blue-900"
-            >
-              Hide
-            </button>
+                        </td>
+                      </tr>
+                    );
+                  })}
+              </tbody>
+            </table>
           </div>
-          <pre className="mt-3 text-sm overflow-auto bg-white p-3 rounded">
-            {JSON.stringify(lastUpdatedOrder, null, 2)}
-          </pre>
-        </div>
-      )}
 
-      {/* ===== FLEET PICKER MODAL ===== */}
+          {editingId && (
+            <div className="px-4 py-4 border-t border-black/20 bg-white/20">
+              <div className="grid grid-cols-1 md:grid-cols-12 gap-3 items-end">
+                <div className="md:col-span-5">
+                  <div className="text-xs font-extrabold mb-1">Ship To</div>
+                  <input
+                    className="w-full border border-black/20 rounded px-3 py-2 bg-white text-sm"
+                    value={editForm.shipToLoc || ""}
+                    onChange={(e) => onChangeEdit("shipToLoc", e.target.value)}
+                  />
+                </div>
+
+                <div className="md:col-span-2">
+                  <div className="text-xs font-extrabold mb-1">Qty</div>
+                  <input
+                    type="number"
+                    className="w-full border border-black/20 rounded px-3 py-2 bg-white text-sm text-right"
+                    value={editForm.pdtQty ?? ""}
+                    onChange={(e) => onChangeEdit("pdtQty", e.target.value)}
+                  />
+                </div>
+
+                <div className="md:col-span-2">
+                  <div className="text-xs font-extrabold mb-1">Rate</div>
+                  <input
+                    type="number"
+                    className="w-full border border-black/20 rounded px-3 py-2 bg-white text-sm text-right"
+                    value={editForm.pdtRate ?? ""}
+                    onChange={(e) => onChangeEdit("pdtRate", e.target.value)}
+                  />
+                </div>
+
+                <div className="md:col-span-3">
+                  <div className="text-xs font-extrabold mb-1">Delivery Date</div>
+                  <input
+                    type="date"
+                    className="w-full border border-black/20 rounded px-3 py-2 bg-white text-sm"
+                    value={editForm.dateDely || ""}
+                    onChange={(e) => onChangeEdit("dateDely", e.target.value)}
+                  />
+                </div>
+
+                <div className="md:col-span-3">
+                  <div className="text-xs font-extrabold mb-1">Time Slot</div>
+                  <input
+                    className="w-full border border-black/20 rounded px-3 py-2 bg-white text-sm"
+                    value={editForm.timeSlot || ""}
+                    onChange={(e) => onChangeEdit("timeSlot", e.target.value)}
+                  />
+                </div>
+
+                <div className="md:col-span-3">
+                  <div className="text-xs font-extrabold mb-1">Status</div>
+                  <input
+                    className="w-full border border-black/20 rounded px-3 py-2 bg-white text-sm"
+                    value={editForm.orderStatus || ""}
+                    onChange={(e) => onChangeEdit("orderStatus", e.target.value)}
+                  />
+                </div>
+
+                <div className="md:col-span-12 text-xs text-black/70">
+                  Editing applies to the currently selected row.
+                </div>
+              </div>
+            </div>
+          )}
+        </div>
+      </div>
+
       <FleetPicker
         open={fleetModalOpen}
-        order={fleetModalOrder}
         onClose={closeFleetModal}
+        order={fleetModalOrder}
         onAllocated={handleFleetAllocated}
       />
     </div>
   );
 }
 
-/* ========================= Fleet Picker (inline) ========================= */
+function Detail({ label, value }) {
+  return (
+    <div>
+      <div className="text-xs font-extrabold text-black/70">{label}</div>
+      <div className="font-semibold break-words">{value || "—"}</div>
+    </div>
+  );
+}
+
+/* ========================= Fleet Picker Modal ========================= */
 
 function FleetPicker({ open, onClose, order, onAllocated }) {
   const [q, setQ] = useState("");
@@ -590,23 +811,20 @@ function FleetPicker({ open, onClose, order, onAllocated }) {
   const [loading, setLoading] = useState(false);
   const [busyId, setBusyId] = useState(null);
 
-  useEffect(() => {
-    if (!open) return;
-    setQ("");
-    fetchFleets("");
-    // eslint-disable-next-line 
+  const vehicleByNo = useMemo(() => {
+    const m = {};
+    for (const f of list || []) {
+      const vNo =
+        f?.vehicle?.vehicleNo ||
+        f?.vehicle?.regNo ||
+        f?.vehicle?.registrationNo ||
+        "";
+      if (vNo) m[norm(vNo)] = true;
+    }
+    return m;
+  }, [list]);
 
-  }, [open]);
-
-  useEffect(() => {
-    if (!open) return;
-    const t = setTimeout(() => fetchFleets(q), 250);
-    return () => clearTimeout(t);
-    // eslint-disable-next-line 
-
-  }, [q, open]);
-
-  const fetchFleets = async (term) => {
+  const fetchFleets = useCallback(async (term) => {
     setLoading(true);
     try {
       const res = await api.get("/fleets", { params: { search: term || "" } });
@@ -614,83 +832,89 @@ function FleetPicker({ open, onClose, order, onAllocated }) {
     } finally {
       setLoading(false);
     }
-  };
+  }, []);
 
-  const doAllocate = async (fleet) => {
-    try {
-      setBusyId(fleet._id);
-      const res = await api.put(`/fleets/${fleet._id}/allocate`, {
-        orderId: order?._id,
-      });
-      const updatedOrder = res.data?.order || res.data;
-      onAllocated?.(updatedOrder);
-      onClose?.();
-    } catch (e) {
-      const msg =
-        e?.response?.data?.error ||
-        (e?.response?.status === 409
-          ? "Fleet already allocated"
-          : "Failed to allocate fleet");
-      alert(msg);
-    } finally {
-      setBusyId(null);
-    }
-  };
+  useEffect(() => {
+    if (!open) return;
+    setQ("");
+    fetchFleets("");
+  }, [open, fetchFleets]);
+
+  useEffect(() => {
+    if (!open) return;
+    const t = window.setTimeout(() => fetchFleets(q), 250);
+    return () => window.clearTimeout(t);
+  }, [q, open, fetchFleets]);
+
+  const doAllocate = useCallback(
+    async (fleet) => {
+      try {
+        setBusyId(fleet._id);
+        const res = await api.put(`/fleets/${fleet._id}/allocate`, { orderId: order?._id });
+        const updatedOrder = res.data?.order || res.data;
+        onAllocated?.(updatedOrder);
+        onClose?.();
+      } catch (e) {
+        const msg =
+          e?.response?.data?.error ||
+          (e?.response?.status === 409 ? "Fleet already allocated." : "Failed to allocate fleet.");
+        window.alert(msg);
+      } finally {
+        setBusyId(null);
+      }
+    },
+    [order, onAllocated, onClose]
+  );
 
   if (!open) return null;
 
   return (
     <div
-      className="fixed inset-0 bg-black/40 z-50 flex items-center justify-center"
+      className="fixed inset-0 bg-black/40 z-50 flex items-center justify-center px-3"
       onClick={onClose}
+      role="dialog"
+      aria-modal="true"
     >
       <div
-        className="w-[min(760px,92vw)] bg-white rounded-lg shadow-xl overflow-hidden"
+        className="w-[min(860px,96vw)] bg-white border-2 border-black/30 shadow-xl overflow-hidden"
         onClick={(e) => e.stopPropagation()}
       >
-        <div className="flex items-center justify-between px-4 py-3 border-b">
-          <div className="flex items-center gap-2">
+        <div className="flex items-center justify-between px-4 py-3 border-b border-black/20 bg-[#c9f3cd]">
+          <div className="flex items-center gap-2 font-extrabold">
             <Truck size={18} />
-            <h3 className="font-semibold">Allocate Fleet</h3>
+            Allocate Fleet
           </div>
-          <button className="p-1 rounded hover:bg-gray-100" onClick={onClose}>
+          <button type="button" className="p-1 rounded hover:bg-white/70" onClick={onClose}>
             <X size={18} />
           </button>
         </div>
 
         <div className="p-4">
-          {order && (
-            <div className="mb-3 text-sm text-gray-600">
-              <span className="font-medium">Order:</span>{" "}
-              {order.orderNo || order._id} •{" "}
-              <span className="font-medium">Customer:</span>{" "}
-              {order.customer?.custName || "—"}
+          <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-3 mb-3">
+            <div className="text-sm">
+              <span className="font-extrabold">Order:</span>{" "}
+              <span className="font-mono">{order?.orderNo || String(order?._id || "").slice(-6) || "—"}</span>
+              <span className="mx-2">|</span>
+              <span className="font-extrabold">Customer:</span>{" "}
+              {order?.customer?.custName || "—"}
             </div>
-          )}
 
-          <div className="relative mb-3">
-            <input
-              value={q}
-              onChange={(e) => setQ(e.target.value)}
-              placeholder="Search fleet (vehicle no / driver / depot)…"
-              className="w-full border rounded pl-9 pr-3 py-2"
-            />
-            <Search
-              size={16}
-              className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-500"
-            />
+            <div className="relative w-full md:w-[420px]">
+              <input
+                value={q}
+                onChange={(e) => setQ(e.target.value)}
+                placeholder="Search fleet (vehicle / driver / depot)…"
+                className="w-full border border-black/20 rounded pl-9 pr-3 py-2 text-sm"
+              />
+              <Search size={16} className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-600" />
+            </div>
           </div>
 
-          <div className="max-h-[420px] overflow-auto divide-y">
-            {loading && (
-              <div className="py-10 text-center text-gray-500">
-                Loading fleets…
-              </div>
-            )}
+          <div className="max-h-[520px] overflow-auto border border-black/20">
+            {loading && <div className="py-10 text-center font-semibold">Loading fleets…</div>}
+
             {!loading && list.length === 0 && (
-              <div className="py-10 text-center text-gray-500">
-                No fleets found.
-              </div>
+              <div className="py-10 text-center font-semibold">No fleets found.</div>
             )}
 
             {!loading &&
@@ -700,27 +924,35 @@ function FleetPicker({ open, onClose, order, onAllocated }) {
                 const driverName = d.driverName || d.profile?.empName || "";
                 const vehicleNo = v.vehicleNo || v.regNo || v.registrationNo || "";
                 const depot = f.depotCd || v.depotCd || "";
+                const cap = v.calibratedCapacity || v.capacity || "";
+
+                const inUse = Boolean(f.isAllocated || f.allocated || f.currentOrderId);
 
                 return (
-                  <div key={f._id} className="flex items-center justify-between py-3">
-                    <div>
-                      <div className="font-medium">{vehicleNo || "(no vehicle)"}</div>
-                      <div className="text-sm text-gray-600">
-                        {driverName ? `Driver: ${driverName}` : "Driver: —"}
-                        {depot ? ` • Depot: ${depot}` : ""}
-                        {v.calibratedCapacity ? ` • Cap: ${v.calibratedCapacity}` : ""}
+                  <div key={f._id} className="flex items-center justify-between gap-3 px-4 py-3 border-b border-black/10">
+                    <div className="min-w-0">
+                      <div className="font-extrabold">
+                        {vehicleNo || "(no vehicle)"}{" "}
+                        {vehicleNo && vehicleByNo[norm(vehicleNo)] ? "" : ""}
+                      </div>
+                      <div className="text-sm text-black/70">
+                        <span className="font-semibold">Driver:</span> {driverName || "—"}
+                        {depot ? <span> • <span className="font-semibold">Depot:</span> {depot}</span> : null}
+                        {cap ? <span> • <span className="font-semibold">Cap:</span> {cap}</span> : null}
                       </div>
                     </div>
-                    <div className="flex items-center gap-2">
-                      {f.isAllocated ? (
-                        <span className="text-sm px-2 py-1 rounded border border-red-200 bg-red-50 text-red-700">
-                          in use
+
+                    <div className="flex items-center gap-2 shrink-0">
+                      {inUse ? (
+                        <span className="text-xs px-2 py-1 rounded border-2 border-red-300 bg-red-50 text-red-800 font-extrabold">
+                          IN USE
                         </span>
                       ) : (
                         <button
+                          type="button"
                           onClick={() => doAllocate(f)}
                           disabled={busyId === f._id}
-                          className="border px-3 py-1.5 rounded bg-blue-600 text-white hover:bg-blue-700 disabled:opacity-60"
+                          className="px-4 py-2 rounded bg-[#0d6078] text-white font-extrabold border-2 border-[#084253] hover:bg-[#0f6f8b] disabled:opacity-60"
                         >
                           {busyId === f._id ? "Allocating…" : "Allocate"}
                         </button>
@@ -729,6 +961,16 @@ function FleetPicker({ open, onClose, order, onAllocated }) {
                   </div>
                 );
               })}
+          </div>
+
+          <div className="mt-3 flex justify-end gap-2">
+            <button
+              type="button"
+              onClick={onClose}
+              className="px-5 py-2 rounded bg-white text-black font-extrabold border-2 border-black/30 hover:bg-gray-50"
+            >
+              Close
+            </button>
           </div>
         </div>
       </div>

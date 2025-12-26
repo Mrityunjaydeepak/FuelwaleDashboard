@@ -522,7 +522,7 @@ export default function OrdersList() {
 
         <div className="text-center py-2">
           <div className="text-3xl font-extrabold uppercase leading-tight">
-            ORDER MANAGING AND ASSIGN TO DRIVER BY FLEET
+            ORDER MANAGING AND ASSIGN TO DRIVER
             <br />
             MANAGER
           </div>
