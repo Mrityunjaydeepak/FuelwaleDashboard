@@ -60,7 +60,7 @@ const MASTERS_ACTIONS = [
   { to: '/customer-master', label: 'CREATE CUSTOMER', roles: ['a'] },
   { to: '/vehicle-master', label: 'CREATE VEHICLE', roles: ['a'] },
   { to: '/create-route', label: 'CREATE DELIVERY ROUTE', roles: ['a'] },
-  { to: '/user-master', label: 'CREATE CREDENTIALS', roles: ['a'] },
+ 
   { to: '/loading-source-master', label: 'CREATE PRODUCTS', roles: ['a'] },
   { to: '/driver-master', label: 'CREATE DRIVER', roles: ['a'] },
 ];
