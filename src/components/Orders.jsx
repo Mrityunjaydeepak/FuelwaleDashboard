@@ -24,6 +24,8 @@ export default function ManageOrders() {
   const [ordersLoading, setOrdersLoading] = useState(false);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
+  const [products, setProducts] = useState([]);
+
 
   const [showConfirm, setShowConfirm] = useState(false);
   const [pendingPayload, setPendingPayload] = useState(null);
@@ -48,6 +50,19 @@ export default function ManageOrders() {
     const dd = String(d.getDate()).padStart(2, '0');
     return `${yyyy}-${mm}-${dd}`;
   };
+useEffect(() => {
+  let alive = true;
+  api
+    .get('/products')
+    .then((res) => {
+      if (!alive) return;
+      setProducts(Array.isArray(res.data) ? res.data : []);
+    })
+    .catch(() => {});
+  return () => {
+    alive = false;
+  };
+}, []);
 
   useEffect(() => {
     const today = formatYMDLocal(new Date());
@@ -861,13 +876,23 @@ export default function ManageOrders() {
                       <label className="block text-[10px] font-medium text-gray-700">
                         Product Name
                       </label>
-                      <input
-                        name="productName"
-                        value={item.productName}
-                        onChange={(e) => handleItemChange(idx, e)}
-                        className="w-full border border-gray-300 rounded-sm px-2 py-1 bg-white"
-                        placeholder="Diesel"
-                      />
+                     <select
+  name="productName"
+  value={item.productName}
+  onChange={(e) => handleItemChange(idx, e)}
+  className="w-full border border-gray-300 rounded-sm px-2 py-1 bg-white"
+>
+  <option value="">Select Product</option>
+  {products.map((p) => {
+    const label = p.productName || p.name || p.code;
+    return (
+      <option key={p._id || label} value={label}>
+        {label}
+      </option>
+    );
+  })}
+</select>
+
                     </div>
                     <div className="col-span-4 sm:col-span-4">
                       <label className="block text-[10px] font-medium text-gray-700">

@@ -4,23 +4,8 @@ import { useNavigate } from 'react-router-dom';
 import { useAuth } from '../contexts/AuthContext';
 import api from '../api';
 
-/**
- * Paste-ready production Login Page:
- * - Matches the screenshot layout (logo + divider + LOGIN + 3 rows)
- * - Enhanced UI (card, spacing, segmented mode switch, better inputs, clearer states)
- * - Flow:
- *    1) Enter USER ID
- *    2) Choose PASSWORD or OTP
- *    3) If PASSWORD -> login
- *       If OTP -> first submit sends OTP, second submit verifies OTP and logs in
- *
- * Logo:
- * - Put your logo at: /public/fuelwale-logo.png
- * - Or change LOGO_SRC below.
- */
-
 const LOGO_SRC = '/fuelwale-logo.png';
-const OTP_RESEND_GAP_SEC = 45; // matches backend RESEND_WINDOW_MS=45s
+const OTP_RESEND_GAP_SEC = 45;
 
 const MODE = {
   PASSWORD: 'PASSWORD',
@@ -90,7 +75,6 @@ async function authedGet(url, token) {
   try {
     return await api.get(url, { headers: { Authorization: `Bearer ${token}` } });
   } catch {
-    // some backends expect raw token instead of Bearer
     return await api.get(url, { headers: { Authorization: token } });
   }
 }
@@ -105,12 +89,10 @@ function extractDepotCdFromEmployee(emp, depots) {
     emp?.depotCode ||
     '';
 
-  // depot code string like "271"
   if (typeof ref === 'string' && ref.trim() && !/^[0-9a-fA-F]{24}$/.test(ref.trim())) {
     return up(ref);
   }
 
-  // objectId string or populated object
   const id =
     (typeof ref === 'string' && /^[0-9a-fA-F]{24}$/.test(ref.trim()) ? ref.trim() : '') ||
     ref?._id ||
@@ -129,7 +111,6 @@ async function fetchDepotCdFallback({ userId, userType, token }) {
   const uid = up(userId);
   const ut = up(userType);
 
-  // Load depots for mapping objectId -> depotCd
   let depots = [];
   try {
     const depRes = await authedGet('/depots', token);
@@ -138,16 +119,12 @@ async function fetchDepotCdFallback({ userId, userType, token }) {
     depots = [];
   }
 
-  // 1) /users/me if available
   try {
     const me = await authedGet('/users/me', token);
     const dc = pickDepotCd(me?.data, null);
     if (dc) return dc;
-  } catch {
-    // ignore
-  }
+  } catch {}
 
-  // 2) Employee user: userId == empCd
   if (ut === 'E') {
     const urls = [
       `/employees/by-empCd/${encodeURIComponent(uid)}`,
@@ -166,24 +143,18 @@ async function fetchDepotCdFallback({ userId, userType, token }) {
 
         const dc = extractDepotCdFromEmployee(emp, depots);
         if (dc) return dc;
-      } catch {
-        // keep trying
-      }
+      } catch {}
     }
 
-    // last fallback: load all employees (only if endpoint permitted)
     try {
       const r = await authedGet('/employees', token);
       const list = Array.isArray(r.data) ? r.data : [];
       const emp = list.find(x => up(x?.empCd) === uid);
       const dc = extractDepotCdFromEmployee(emp, depots);
       if (dc) return dc;
-    } catch {
-      // ignore
-    }
+    } catch {}
   }
 
-  // 3) Driver user
   if (ut === 'D') {
     const urls = [
       `/drivers/by-driverCd/${encodeURIComponent(uid)}`,
@@ -201,9 +172,7 @@ async function fetchDepotCdFallback({ userId, userType, token }) {
 
         const dc = extractDepotCdFromEmployee(driver, depots);
         if (dc) return dc;
-      } catch {
-        // ignore
-      }
+      } catch {}
     }
   }
 
@@ -211,7 +180,6 @@ async function fetchDepotCdFallback({ userId, userType, token }) {
 }
 
 function parseRetrySecondsFromMessage(msg) {
-  // backend: "OTP sent recently. Try again in 12s."
   const m = String(msg || '').match(/in\s+(\d+)\s*s/i);
   if (!m) return 0;
   const n = Number(m[1]);
@@ -225,7 +193,7 @@ export default function LoginPage() {
   const [form, setForm] = useState({ userId: '', pwd: '', otp: '' });
   const userIdTrimmed = useMemo(() => String(form.userId || '').trim(), [form.userId]);
 
-  const [mode, setMode] = useState(''); // '' | MODE.PASSWORD | MODE.OTP
+  const [mode, setMode] = useState('');
   const [otpRequested, setOtpRequested] = useState(false);
   const [otpSentTo, setOtpSentTo] = useState('');
   const [resendIn, setResendIn] = useState(0);
@@ -244,9 +212,7 @@ export default function LoginPage() {
     try {
       const lastUser = localStorage.getItem('lastUserId');
       if (lastUser) setForm(prev => ({ ...prev, userId: lastUser }));
-    } catch {
-      // ignore
-    }
+    } catch {}
   }, []);
 
   useEffect(() => {
@@ -279,9 +245,7 @@ export default function LoginPage() {
   async function finalizeLogin({ result, userId }) {
     try {
       localStorage.setItem('lastUserId', String(userId || '').trim());
-    } catch {
-      // ignore
-    }
+    } catch {}
 
     const tokenFromResult = pickTokenFromResult(result);
     const tokenFromStorage =
@@ -291,35 +255,26 @@ export default function LoginPage() {
       sessionStorage.getItem('token') ||
       '';
 
-    // persist token for OTP flow (AuthContext may not do this automatically)
     if (tokenFromResult) {
       try {
         if (!localStorage.getItem('token') && !localStorage.getItem('authToken')) {
           localStorage.setItem('token', tokenFromResult);
         }
-      } catch {
-        // ignore
-      }
+      } catch {}
     }
 
-    // best-effort to inform AuthContext (optional)
     try {
       if (typeof auth?.setToken === 'function' && tokenFromResult) auth.setToken(tokenFromResult);
       if (typeof auth?.setAuthToken === 'function' && tokenFromResult) auth.setAuthToken(tokenFromResult);
-    } catch {
-      // ignore
-    }
+    } catch {}
 
     const decoded = tokenFromStorage ? safeJwtDecode(tokenFromStorage) : null;
     const userType = pickUserType(result, decoded);
 
-    // Admin: do not require depot
     if (userType === 'A') {
       try {
         localStorage.removeItem('depotCd');
-      } catch {
-        // ignore
-      }
+      } catch {}
       navigate('/');
       return;
     }
@@ -344,9 +299,7 @@ export default function LoginPage() {
 
     try {
       localStorage.setItem('depotCd', depotCd);
-    } catch {
-      // ignore
-    }
+    } catch {}
 
     navigate('/');
   }
@@ -363,11 +316,9 @@ export default function LoginPage() {
     setError('');
     setInfo('');
 
-    // Changing userId should reset auth mode and OTP state (prevents stale OTP confusion)
     if (mode) setMode('');
     resetOtpState();
 
-    // clear password if changing user
     setForm(prev => ({ ...prev, userId: value, pwd: '', otp: '' }));
     setCapsLockOn(false);
   }
@@ -450,7 +401,6 @@ export default function LoginPage() {
       const msg = mapErrorMessage(err);
       setError(msg);
 
-      // if backend tells retry seconds, reflect it on UI
       const retry = parseRetrySecondsFromMessage(msg);
       if (retry > 0) setResendIn(retry);
     } finally {
@@ -466,13 +416,11 @@ export default function LoginPage() {
       return;
     }
 
-    // First submit in OTP mode sends OTP
     if (!otpRequested) {
       await handleOtpRequest();
       return;
     }
 
-    // Second submit verifies
     const otp = String(form.otp || '').trim();
     if (!otp || otp.length < 4) {
       setError('Please enter a valid OTP.');
@@ -518,259 +466,244 @@ export default function LoginPage() {
 
   const isPassword = mode === MODE.PASSWORD;
   const isOtp = mode === MODE.OTP;
-
   const canChooseMode = Boolean(userIdTrimmed) && !loading;
-
-  const labelBase =
-    'text-[15px] font-semibold tracking-wide text-gray-900';
-  const inputBase =
-    'w-full border-2 border-green-500 rounded-xl px-5 py-4 text-[15px] ' +
-    'outline-none focus:ring-4 focus:ring-green-100 transition disabled:bg-gray-50 disabled:cursor-not-allowed';
-
-  const pillWrap =
-    'inline-flex rounded-xl bg-green-50 p-1 border border-green-200';
-  const pillBtn = (active) =>
-    `px-4 py-2 rounded-lg text-sm font-bold tracking-wide transition ` +
-    (active ? 'bg-green-600 text-white shadow-sm' : 'text-green-800 hover:bg-green-100');
-
-  const primaryBtn =
-    'w-full sm:w-64 rounded-xl bg-green-600 px-6 py-4 text-white font-extrabold tracking-wide ' +
-    'hover:bg-green-700 active:bg-green-800 transition disabled:opacity-60 disabled:cursor-not-allowed';
-
-  const secondaryLink =
-    'text-sm font-semibold text-green-700 hover:text-green-800 hover:underline transition';
 
   const actionText = (() => {
     if (!mode) return 'CONTINUE';
     if (isPassword) return loading ? 'LOGGING IN…' : 'LOGIN';
-    // OTP
     if (!otpRequested) return loading ? 'SENDING OTP…' : 'SEND OTP';
     return loading ? 'VERIFYING…' : 'VERIFY & LOGIN';
   })();
 
   return (
-    <div className="min-h-screen bg-white flex items-center justify-center px-4 py-10">
-      <div className="w-full max-w-5xl">
-        <div className="bg-white rounded-3xl shadow-sm ring-1 ring-gray-100 px-6 sm:px-16 py-10 sm:py-14">
-          {/* Logo */}
-          <div className="flex flex-col items-center">
-            <img
-              src={LOGO_SRC}
-              alt="Fuelwale"
-              className="h-14 w-auto object-contain"
-              onError={(e) => {
-                e.currentTarget.style.display = 'none';
-              }}
-            />
-            <div className="w-full max-w-3xl mt-6 border-t border-gray-200" />
-            <h1 className="mt-10 text-5xl font-extrabold tracking-[0.12em] text-black">
-              LOGIN
+    <div className="min-h-screen bg-gradient-to-br from-blue-50 via-indigo-50 to-blue-100 flex items-center justify-center px-4 py-12">
+      <div className="w-full max-w-md">
+        {/* Main Card */}
+        <div className="bg-white/80 backdrop-blur-xl rounded-3xl shadow-2xl border border-blue-100/50 p-8 sm:p-10">
+          
+          {/* Header */}
+          <div className="text-center mb-10">
+            <div className="mx-auto w-20 h-20 bg-gradient-to-r from-blue-500 to-indigo-600 rounded-2xl flex items-center justify-center shadow-lg mb-6">
+              <img
+                src={LOGO_SRC}
+                alt="Fuelwale"
+                className="h-12 w-12 object-contain"
+                onError={(e) => {
+                  e.currentTarget.style.display = 'none';
+                }}
+              />
+            </div>
+            <h1 className="text-4xl sm:text-5xl font-black bg-gradient-to-r from-blue-600 via-indigo-700 to-blue-800 bg-clip-text text-transparent tracking-tight">
+              Fuelwale
             </h1>
+            <div className="w-24 h-1 bg-gradient-to-r from-blue-500 to-indigo-600 mx-auto mt-4 rounded-full shadow-sm" />
+            <p className="text-sm text-gray-600 mt-3 font-medium">Welcome back! Please sign in to your account</p>
           </div>
 
-          <div className="mt-12">
-            {/* Alerts */}
-            <div className="mx-auto max-w-3xl">
-              {error && (
-                <div className="mb-6 rounded-xl border border-red-200 bg-red-50 px-5 py-4 text-sm text-red-800">
-                  {error}
-                </div>
-              )}
-              {info && (
-                <div className="mb-6 rounded-xl border border-green-200 bg-green-50 px-5 py-4 text-sm text-green-900">
-                  {info}
-                </div>
-              )}
+          {/* Alerts */}
+          <div className="mb-8">
+            {error && (
+              <div className="bg-red-50 border border-red-200 rounded-2xl p-4 text-sm text-red-800 flex items-start gap-2">
+                <svg className="w-5 h-5 mt-0.5 flex-shrink-0" fill="currentColor" viewBox="0 0 20 20">
+                  <path fillRule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zM8.707 7.293a1 1 0 00-1.414 1.414L8.586 10l-1.293 1.293a1 1 0 101.414 1.414L10 11.414l1.293 1.293a1 1 0 001.414-1.414L11.414 10l1.293-1.293a1 1 0 00-1.414-1.414L10 8.586 8.707 7.293z" clipRule="evenodd" />
+                </svg>
+                {error}
+              </div>
+            )}
+            {info && (
+              <div className="bg-emerald-50 border border-emerald-200 rounded-2xl p-4 text-sm text-emerald-800 flex items-start gap-2">
+                <svg className="w-5 h-5 mt-0.5 flex-shrink-0" fill="currentColor" viewBox="0 0 20 20">
+                  <path fillRule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm3.707-9.293a1 1 0 00-1.414-1.414L9 10.586 7.707 9.293a1 1 0 00-1.414 1.414l2 2a1 1 0 001.414 0l4-4z" clipRule="evenodd" />
+                </svg>
+                {info}
+              </div>
+            )}
+          </div>
+
+          {/* Form */}
+          <form onSubmit={handleSubmit} noValidate className="space-y-6">
+            {/* User ID */}
+            <div>
+              <label className="block text-sm font-bold text-gray-900 mb-3 tracking-wide">User ID</label>
+              <input
+                name="userId"
+                value={form.userId}
+                onChange={(e) => onUserIdChange(e.target.value)}
+                className="w-full h-14 px-5 py-3 bg-white/50 backdrop-blur-sm border-2 border-blue-200 rounded-2xl text-lg font-semibold text-gray-900 placeholder-gray-500 focus:border-blue-400 focus:ring-4 focus:ring-blue-100/50 focus:outline-none transition-all duration-300 disabled:bg-gray-100 disabled:cursor-not-allowed shadow-sm hover:shadow-md"
+                inputMode="text"
+                autoComplete="username"
+                maxLength={32}
+                placeholder="Enter your User ID"
+                disabled={loading}
+              />
             </div>
 
-            {/* Form body (screenshot-like alignment) */}
-            <form onSubmit={handleSubmit} noValidate className="mx-auto max-w-3xl">
-              <div className="space-y-10">
-                {/* USER ID */}
-                <div className="grid grid-cols-1 sm:grid-cols-[200px_1fr] gap-4 sm:gap-10 items-center">
-                  <label className={labelBase}>USER ID</label>
-                  <input
-                    name="userId"
-                    value={form.userId}
-                    onChange={(e) => onUserIdChange(e.target.value)}
-                    className={inputBase}
-                    inputMode="text"
-                    autoComplete="username"
-                    maxLength={32}
-                    disabled={loading}
-                  />
-                </div>
-
-                {/* Mode choice (kept clean, sits under USER ID, like a subtle enhancement) */}
-                <div className="grid grid-cols-1 sm:grid-cols-[200px_1fr] gap-4 sm:gap-10 items-center">
-                  <div />
-                  <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
-                    <div className={pillWrap} role="tablist" aria-label="Login mode">
-                      <button
-                        type="button"
-                        className={pillBtn(isPassword)}
-                        onClick={() => selectMode(MODE.PASSWORD)}
-                        disabled={!canChooseMode}
-                        role="tab"
-                        aria-selected={isPassword}
-                      >
-                        PASSWORD
-                      </button>
-                      <button
-                        type="button"
-                        className={pillBtn(isOtp)}
-                        onClick={() => selectMode(MODE.OTP)}
-                        disabled={!canChooseMode}
-                        role="tab"
-                        aria-selected={isOtp}
-                      >
-                        OTP
-                      </button>
-                    </div>
-
-                    {mode && (
-                      <button
-                        type="button"
-                        className={secondaryLink}
-                        onClick={() => {
-                          setMode('');
-                          setError('');
-                          setInfo('');
-                          setForm(prev => ({ ...prev, pwd: '', otp: '' }));
-                          resetOtpState();
-                        }}
-                        disabled={loading}
-                      >
-                        Change method
-                      </button>
-                    )}
-                  </div>
-                </div>
-
-                {/* PASSWORD */}
-                <div className="grid grid-cols-1 sm:grid-cols-[200px_1fr] gap-4 sm:gap-10 items-center">
-                  <label className={labelBase}>PASSWORD</label>
-                  <div className="relative">
-                    <input
-                      ref={pwdRef}
-                      name="pwd"
-                      type={showPwd ? 'text' : 'password'}
-                      value={form.pwd}
-                      onChange={(e) => {
-                        setForm(prev => ({ ...prev, pwd: e.target.value }));
-                        setError('');
-                        setInfo('');
-                      }}
-                      onKeyUp={handlePwdKeyEvents}
-                      onKeyDown={handlePwdKeyEvents}
-                      onBlur={() => setCapsLockOn(false)}
-                      className={`${inputBase} pr-16`}
-                      autoComplete="current-password"
-                      disabled={loading || !isPassword}
-                      aria-disabled={loading || !isPassword}
-                    />
-                    <button
-                      type="button"
-                      aria-label={showPwd ? 'Hide password' : 'Show password'}
-                      onClick={() => setShowPwd(s => !s)}
-                      className="absolute right-4 top-1/2 -translate-y-1/2 text-sm font-bold text-green-700 hover:underline disabled:opacity-60"
-                      tabIndex={-1}
-                      disabled={!isPassword}
-                    >
-                      {showPwd ? 'Hide' : 'Show'}
-                    </button>
-                  </div>
-                </div>
-
-                {capsLockOn && isPassword && (
-                  <div className="grid grid-cols-1 sm:grid-cols-[200px_1fr] gap-4 sm:gap-10 items-center">
-                    <div />
-                    <div className="text-xs text-amber-700">
-                      Caps Lock is ON
-                    </div>
-                  </div>
-                )}
-
-                {/* OTP */}
-                <div className="grid grid-cols-1 sm:grid-cols-[200px_1fr] gap-4 sm:gap-10 items-center">
-                  <label className={labelBase}>OTP</label>
-                  <input
-                    ref={otpRef}
-                    name="otp"
-                    value={form.otp}
-                    onChange={(e) => {
-                      const v = e.target.value.replace(/[^\d]/g, '').slice(0, 6);
-                      setForm(prev => ({ ...prev, otp: v }));
-                      setError('');
-                      setInfo('');
-                    }}
-                    className={inputBase}
-                    inputMode="numeric"
-                    autoComplete="one-time-code"
-                    maxLength={6}
-                    placeholder={isOtp && otpRequested ? 'Enter OTP' : ''}
-                    disabled={loading || !isOtp}
-                    aria-disabled={loading || !isOtp}
-                  />
-                </div>
-
-                {/* OTP helper row (resend status) */}
-                {isOtp && (
-                  <div className="grid grid-cols-1 sm:grid-cols-[200px_1fr] gap-4 sm:gap-10 items-center -mt-6">
-                    <div />
-                    <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2 text-sm">
-                      <div className="text-gray-600">
-                        {otpRequested ? (
-                          <>
-                            OTP sent{otpSentTo ? ` to ${otpSentTo}` : ''}.
-                            {' '}
-                            {resendIn > 0 ? (
-                              <span className="text-gray-500">Resend available in {resendIn}s.</span>
-                            ) : (
-                              <span className="text-gray-500">You can resend now.</span>
-                            )}
-                          </>
-                        ) : (
-                          <span className="text-gray-500">Click “SEND OTP” to receive a one-time password.</span>
-                        )}
-                      </div>
-
-                      {otpRequested && (
-                        <button
-                          type="button"
-                          className={secondaryLink}
-                          onClick={handleOtpRequest}
-                          disabled={loading || resendIn > 0}
-                        >
-                          {resendIn > 0 ? `Resend (${resendIn}s)` : 'Resend OTP'}
-                        </button>
-                      )}
-                    </div>
-                  </div>
-                )}
-
-                {/* Primary action button */}
-                <div className="pt-4 flex flex-col items-center gap-3">
+            {/* Mode Selection */}
+            {canChooseMode && (
+              <div>
+                <label className="block text-sm font-bold text-gray-900 mb-3 tracking-wide">Choose Login Method</label>
+                <div className="flex bg-gradient-to-r from-blue-50 to-indigo-50 rounded-2xl p-1 border-2 border-blue-200 shadow-inner">
                   <button
-                    type="submit"
-                    className={primaryBtn}
-                    disabled={loading || !userIdTrimmed || !mode}
+                    type="button"
+                    className={`flex-1 py-4 px-6 rounded-xl font-bold text-lg transition-all duration-300 ${
+                      isPassword
+                        ? 'bg-gradient-to-r from-blue-500 to-blue-600 text-white shadow-lg shadow-blue-500/25 scale-105'
+                        : 'text-blue-700 hover:text-blue-900 hover:bg-white/50'
+                    }`}
+                    onClick={() => selectMode(MODE.PASSWORD)}
+                    disabled={loading}
                   >
-                    {actionText}
+                    🔐 Password
                   </button>
-
-                  {/* Small guidance line (kept understated) */}
-                  <div className="text-xs text-gray-500 text-center max-w-xl">
-                    Driver users must have an assigned/active trip to log in.
-                  </div>
+                  <button
+                    type="button"
+                    className={`flex-1 py-4 px-6 rounded-xl font-bold text-lg transition-all duration-300 ${
+                      isOtp
+                        ? 'bg-gradient-to-r from-blue-500 to-blue-600 text-white shadow-lg shadow-blue-500/25 scale-105'
+                        : 'text-blue-700 hover:text-blue-900 hover:bg-white/50'
+                    }`}
+                    onClick={() => selectMode(MODE.OTP)}
+                    disabled={loading}
+                  >
+                    📱 OTP
+                  </button>
                 </div>
               </div>
-            </form>
-          </div>
+            )}
+
+            {/* Dynamic Content - Only show when mode selected */}
+            {mode && (
+              <div className="space-y-6 pt-2">
+                {/* Password Field */}
+                {isPassword && (
+                  <>
+                    <div>
+                      <label className="block text-sm font-bold text-gray-900 mb-3 tracking-wide">Password</label>
+                      <div className="relative">
+                        <input
+                          ref={pwdRef}
+                          name="pwd"
+                          type={showPwd ? 'text' : 'password'}
+                          value={form.pwd}
+                          onChange={(e) => {
+                            setForm(prev => ({ ...prev, pwd: e.target.value }));
+                            setError('');
+                            setInfo('');
+                          }}
+                          onKeyUp={handlePwdKeyEvents}
+                          onKeyDown={handlePwdKeyEvents}
+                          onBlur={() => setCapsLockOn(false)}
+                          className="w-full h-14 pr-16 px-5 py-3 bg-white/50 backdrop-blur-sm border-2 border-blue-200 rounded-2xl text-lg font-semibold text-gray-900 placeholder-gray-500 focus:border-blue-400 focus:ring-4 focus:ring-blue-100/50 focus:outline-none transition-all duration-300 disabled:bg-gray-100 disabled:cursor-not-allowed shadow-sm hover:shadow-md"
+                          autoComplete="current-password"
+                          placeholder="Enter your password"
+                          disabled={loading}
+                        />
+                        <button
+                          type="button"
+                          aria-label={showPwd ? 'Hide password' : 'Show password'}
+                          onClick={() => setShowPwd(s => !s)}
+                          className="absolute right-4 top-1/2 -translate-y-1/2 text-lg font-bold text-blue-600 hover:text-blue-700 transition-colors disabled:opacity-50"
+                          disabled={loading}
+                        >
+                          {showPwd ? '🙈' : '👁️'}
+                        </button>
+                      </div>
+                    </div>
+
+                    {capsLockOn && (
+                      <div className="bg-amber-50 border border-amber-200 rounded-xl p-3 text-sm text-amber-800 flex items-center gap-2">
+                        <div className="w-5 h-5 bg-amber-400 rounded-full flex items-center justify-center text-xs font-bold text-white">⌨️</div>
+                        Caps Lock is ON
+                      </div>
+                    )}
+                  </>
+                )}
+
+                {/* OTP Field */}
+                {isOtp && (
+                  <>
+                    <div>
+                      <label className="block text-sm font-bold text-gray-900 mb-3 tracking-wide">OTP</label>
+                      <input
+                        ref={otpRef}
+                        name="otp"
+                        value={form.otp}
+                        onChange={(e) => {
+                          const v = e.target.value.replace(/[^\d]/g, '').slice(0, 6);
+                          setForm(prev => ({ ...prev, otp: v }));
+                          setError('');
+                          setInfo('');
+                        }}
+                        className="w-full h-14 px-5 py-3 bg-white/50 backdrop-blur-sm border-2 border-blue-200 rounded-2xl text-lg font-semibold text-gray-900 placeholder-gray-500 focus:border-blue-400 focus:ring-4 focus:ring-blue-100/50 focus:outline-none transition-all duration-300 disabled:bg-gray-100 disabled:cursor-not-allowed shadow-sm hover:shadow-md text-center tracking-widest"
+                        inputMode="numeric"
+                        autoComplete="one-time-code"
+                        maxLength={6}
+                        placeholder={otpRequested ? 'Enter 4-6 digit OTP' : 'Click SEND OTP first'}
+                        disabled={loading || !otpRequested}
+                      />
+                    </div>
+
+                    {/* OTP Status */}
+                    <div className="pt-2">
+                      <div className="text-sm text-gray-600 bg-gray-50/50 rounded-xl p-4 border border-gray-200">
+                        {otpRequested ? (
+                          <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
+                            <div className="flex items-center gap-2">
+                              <div className="w-6 h-6 bg-emerald-400 rounded-full flex items-center justify-center text-xs font-bold text-white">✓</div>
+                              <span>OTP sent{otpSentTo ? ` to ${otpSentTo}` : ''}</span>
+                            </div>
+                            <button
+                              type="button"
+                              className="px-4 py-2 bg-gradient-to-r from-blue-500 to-blue-600 text-white font-bold text-sm rounded-xl hover:from-blue-600 hover:to-blue-700 shadow-md hover:shadow-lg transition-all duration-300 disabled:opacity-50 disabled:cursor-not-allowed whitespace-nowrap"
+                              onClick={handleOtpRequest}
+                              disabled={loading || resendIn > 0}
+                            >
+                              {resendIn > 0 ? `Resend (${resendIn}s)` : 'Resend OTP'}
+                            </button>
+                          </div>
+                        ) : (
+                          <div className="flex items-center justify-center gap-2 text-gray-500">
+                            <div className="w-5 h-5 bg-blue-400 rounded-full flex items-center justify-center text-xs font-bold text-white animate-pulse">📱</div>
+                            Click "SEND OTP" to receive code on your registered mobile
+                          </div>
+                        )}
+                      </div>
+                    </div>
+                  </>
+                )}
+              </div>
+            )}
+
+            {/* Submit Button */}
+            <button
+              type="submit"
+              className={`w-full h-14 rounded-2xl font-black text-xl tracking-wide transition-all duration-300 shadow-2xl ${
+                loading || !userIdTrimmed || !mode
+                  ? 'bg-gray-400 cursor-not-allowed'
+                  : 'bg-gradient-to-r from-blue-500 via-blue-600 to-indigo-600 hover:from-blue-600 hover:via-blue-700 hover:to-indigo-700 active:scale-95 transform'
+              } text-white flex items-center justify-center gap-3 disabled:shadow-none`}
+              disabled={loading || !userIdTrimmed || !mode}
+            >
+              {loading ? (
+                <>
+                  <div className="w-6 h-6 border-2 border-white border-t-transparent rounded-full animate-spin" />
+                  {actionText}
+                </>
+              ) : (
+                actionText
+              )}
+            </button>
+
+            <div className="text-xs text-gray-500 text-center pt-2">
+              👨‍💼 Driver users must have an assigned/active trip to log in
+            </div>
+          </form>
         </div>
 
-        {/* Subtle footer spacing like screenshot margins */}
-        <div className="h-6" />
+        {/* Footer */}
+        <div className="text-center mt-8 text-xs text-gray-500">
+          © 2026 Fuelwale. All rights reserved.
+        </div>
       </div>
     </div>
   );
